@@ -10,9 +10,9 @@ import { useState, useEffect, useCallback } from "react";
 
 const CONFIG = {
   tenantId: "0cd4c62a-f014-46ba-821f-a1361b7fcb06",
-  clientId: "50761768-c070-4f5d-bdab-8f0009ab9718",
+  clientId: "e2992f66-278a-4c4d-a65b-a84a3d0b4812",
   authority: "https://login.microsoftonline.com/0cd4c62a-f014-46ba-821f-a1361b7fcb06",
-  redirectUri: "http://localhost:3000",
+  redirectUri: "https://datareports-pilar.netlify.app",
   scopes: [
     "https://analysis.windows.net/powerbi/api/Report.Read.All",
     "https://analysis.windows.net/powerbi/api/Workspace.Read.All",
@@ -88,6 +88,113 @@ function parseUrl(url) {
   return null;
 }
 
+// ========================
+// MSAL AUTHENTICATION
+// ========================
+let msalInstance = null;
+
+function getMsalInstance() {
+  if (!msalInstance && window.msal) {
+    msalInstance = new window.msal.PublicClientApplication({
+      auth: {
+        clientId: CONFIG.clientId,
+        authority: CONFIG.authority,
+        redirectUri: CONFIG.redirectUri,
+      },
+      cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false },
+    });
+  }
+  return msalInstance;
+}
+
+async function msalLogin() {
+  const instance = getMsalInstance();
+  if (!instance) throw new Error("MSAL not loaded");
+  await instance.initialize();
+  const response = await instance.loginPopup({ scopes: CONFIG.scopes });
+  return response.account;
+}
+
+async function getAccessToken() {
+  const instance = getMsalInstance();
+  if (!instance) throw new Error("MSAL not loaded");
+  const accounts = instance.getAllAccounts();
+  if (accounts.length === 0) throw new Error("No accounts");
+  try {
+    const response = await instance.acquireTokenSilent({ scopes: CONFIG.scopes, account: accounts[0] });
+    return response.accessToken;
+  } catch (e) {
+    const response = await instance.acquireTokenPopup({ scopes: CONFIG.scopes });
+    return response.accessToken;
+  }
+}
+
+// ========================
+// POWER BI EMBED
+// ========================
+function PowerBIEmbed({ report, dark }) {
+  const containerId = `pbi-container-${report.id}`;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    async function embed() {
+      try {
+        setLoading(true);
+        setError(null);
+        const token = await getAccessToken();
+        const container = document.getElementById(containerId);
+        if (!container || !mounted) return;
+
+        const models = window["powerbi-client"].models;
+        const embedConfig = {
+          type: "report",
+          id: report.id,
+          embedUrl: `https://app.powerbi.com/reportEmbed?reportId=${report.id}&groupId=${report.groupId}`,
+          accessToken: token,
+          tokenType: models.TokenType.Aad,
+          settings: {
+            panes: { filters: { visible: false }, pageNavigation: { visible: true } },
+            background: models.BackgroundType.Transparent,
+            layoutType: models.LayoutType.Custom,
+            customLayout: { displayOption: models.DisplayOption.FitToWidth },
+          },
+        };
+
+        window.powerbi.reset(container);
+        const embeddedReport = window.powerbi.embed(container, embedConfig);
+        embeddedReport.on("loaded", () => { if (mounted) setLoading(false); });
+        embeddedReport.on("error", (event) => { if (mounted) { setError("Error al cargar el reporte: " + (event?.detail?.message || "Error desconocido")); setLoading(false); } });
+      } catch (e) {
+        if (mounted) { setError("Error de autenticación: " + e.message); setLoading(false); }
+      }
+    }
+    embed();
+    return () => { mounted = false; };
+  }, [report.id, report.groupId]);
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      {loading && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: dark ? "#0D0F14" : "#F9FAFB", zIndex: 5 }}>
+          <div style={{ width: 40, height: 40, border: `3px solid ${dark ? "#2A2F3C" : "#E5E7EB"}`, borderTopColor: "#0D9488", borderRadius: "50%", animation: "spin 1s linear infinite", marginBottom: 16 }}/>
+          <p style={{ fontSize: 13, color: dark ? "#8B93A7" : "#6B7280" }}>Cargando reporte...</p>
+          <p style={{ fontSize: 11, color: dark ? "#5C6478" : "#9CA3AF", marginTop: 4 }}>{report.name}</p>
+        </div>
+      )}
+      {error && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: dark ? "#0D0F14" : "#F9FAFB", zIndex: 5 }}>
+          <svg width="48" height="48" viewBox="0 0 48 48" style={{ color: "#EF4444", marginBottom: 12 }}><circle cx="24" cy="24" r="20" stroke="currentColor" strokeWidth="2" fill="none"/><line x1="24" y1="14" x2="24" y2="28" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="24" cy="34" r="2" fill="currentColor"/></svg>
+          <p style={{ fontSize: 13, color: "#EF4444", fontWeight: 500 }}>Error al cargar</p>
+          <p style={{ fontSize: 11, color: dark ? "#5C6478" : "#9CA3AF", marginTop: 4, maxWidth: 400, textAlign: "center" }}>{error}</p>
+        </div>
+      )}
+      <div id={containerId} style={{ width: "100%", height: "100%", minHeight: 500 }}/>
+    </div>
+  );
+}
+
 const Logo = ({ size = "normal", dark }) => {
   const s = size === "small" ? 0.55 : 1;
   const tc = dark ? darkTheme.text : "#1a1a1a";
@@ -113,7 +220,23 @@ function LoginScreen({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState(new Date());
   useEffect(() => { const i = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(i); }, []);
-  const handleLogin = () => { setLoading(true); setTimeout(() => onLogin({ name: "Richi Gonzalez", email: "richi.gonzalez@pilarpy.onmicrosoft.com", role: "Administrador BI", avatar: "RG" }), 1500); };
+  const [loginError, setLoginError] = useState(null);
+  const handleLogin = async () => {
+    setLoading(true);
+    setLoginError(null);
+    try {
+      const account = await msalLogin();
+      onLogin({
+        name: account.name || account.username,
+        email: account.username,
+        role: "Usuario BI",
+        avatar: (account.name || "U").split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase(),
+      });
+    } catch (e) {
+      setLoginError(e.message || "Error al iniciar sesión");
+      setLoading(false);
+    }
+  };
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", fontFamily: "'Outfit', system-ui", background: "#0F1117" }}>
@@ -149,6 +272,11 @@ function LoginScreen({ onLogin }) {
             {loading ? <div style={{ width: 20, height: 20, border: `2px solid ${darkTheme.border}`, borderTopColor: T.teal, borderRadius: "50%", animation: "spin .6s linear infinite" }}/> : <svg width="20" height="20" viewBox="0 0 20 20"><rect x="1" y="1" width="8" height="8" fill="#F25022"/><rect x="11" y="1" width="8" height="8" fill="#7FBA00"/><rect x="1" y="11" width="8" height="8" fill="#00A4EF"/><rect x="11" y="11" width="8" height="8" fill="#FFB900"/></svg>}
             <span style={{ fontSize: 14, fontWeight: 500, color: darkTheme.text }}>{loading ? "Conectando..." : "Iniciar sesión con Microsoft"}</span>
           </button>
+          {loginError && (
+            <div style={{ marginTop: 12, padding: "12px 16px", borderRadius: 12, background: "#7F1D1D20", border: "1px solid #7F1D1D40" }}>
+              <p style={{ fontSize: 11, color: "#F87171" }}>{loginError}</p>
+            </div>
+          )}
           <div style={{ marginTop: 20, padding: "14px 20px", borderRadius: 14, background: darkTheme.bgSurface, border: `1px solid ${darkTheme.border}` }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: T.teal }}><path d="M8 1a4 4 0 0 0-4 4v3H3a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-1V5a4 4 0 0 0-4-4z" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
@@ -505,20 +633,22 @@ function Dashboard({ user, onLogout }) {
                 <span style={{ fontSize: 11, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>Report: {selectedReport.id.substring(0, 16)}...</span>
               </div>
             </div>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: dark ? "#0D0F14" : "#F9FAFB" }}>
-              <div style={{ width: 72, height: 72, borderRadius: 20, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
-                <svg width="32" height="32" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[selectedReport.icon]}</svg>
-              </div>
-              <p style={{ fontSize: 18, fontWeight: 500, color: theme.text }}>{selectedReport.name}</p>
-              <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 8, textAlign: "center", maxWidth: 380, lineHeight: 1.6 }}>Aquí se renderiza el iframe de Power BI Embedded</p>
-              <div style={{ marginTop: 20, background: theme.bgSurface, borderRadius: 14, padding: 20, maxWidth: 440, width: "100%" }}>
-                {[{ l: "Report ID", v: selectedReport.id }, { l: "Group ID", v: selectedReport.groupId }, { l: "Token Type", v: "Aad (User Owns Data)" }].map((item, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: i < 2 ? `1px solid ${theme.border}` : "none" }}>
-                    <span style={{ fontSize: 11, color: theme.textMuted }}>{item.l}</span>
-                    <span style={{ fontSize: 10, color: T.teal, fontFamily: "'JetBrains Mono', monospace" }}>{item.v}</span>
-                  </div>
-                ))}
-              </div>
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              {selectedReport.status === "maintenance" ? (
+                <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: dark ? "#0D0F14" : "#F9FAFB" }}>
+                  <svg width="48" height="48" viewBox="0 0 16 16" style={{ color: "#EF4444", marginBottom: 16 }}><path d="M6.5 1.5h3l.5 2 1.5.7 1.8-1 2.1 2.1-1 1.8.7 1.5 2 .5v3l-2 .5-.7 1.5 1 1.8-2.1 2.1-1.8-1-1.5.7-.5 2h-3l-.5-2-1.5-.7-1.8 1-2.1-2.1 1-1.8L1.5 9.5l-2-.5v-3l2-.5.7-1.5-1-1.8 2.1-2.1 1.8 1L6.5 1.5z" stroke="currentColor" strokeWidth="1.2" fill="none"/><circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
+                  <p style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>Reporte en mantenimiento</p>
+                  <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 6 }}>Este reporte no está disponible temporalmente.</p>
+                </div>
+              ) : selectedReport.status === "draft" ? (
+                <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: dark ? "#0D0F14" : "#F9FAFB" }}>
+                  <svg width="48" height="48" viewBox="0 0 16 16" style={{ color: "#F59E0B", marginBottom: 16 }}><path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinejoin="round"/></svg>
+                  <p style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>Reporte en borrador</p>
+                  <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 6 }}>Este reporte aún no ha sido publicado.</p>
+                </div>
+              ) : (
+                <PowerBIEmbed report={selectedReport} dark={dark} />
+              )}
             </div>
           </div>
         </div>
@@ -528,7 +658,7 @@ function Dashboard({ user, onLogout }) {
 
   return (
     <div style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}*{box-sizing:border-box;margin:0;padding:0}`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box;margin:0;padding:0}`}</style>
 
       {showAdmin && <AdminPanel reports={reports} onSave={saveReports} onClose={() => setShowAdmin(false)} dark={dark}/>}
 
@@ -556,15 +686,15 @@ function Dashboard({ user, onLogout }) {
 
           <div style={{ position: "relative" }}>
             <button onClick={() => setShowProfile(!showProfile)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 8px 5px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer" }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Richi</span>
-              <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}>RG</div>
+              <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{user.name.split(" ")[0]}</span>
+              <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}{user.avatar}</div>
             </button>
             {showProfile && (
               <div style={{ position: "absolute", top: 48, right: 0, width: 260, background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, boxShadow: `0 16px 48px ${dark ? "rgba(0,0,0,.4)" : "rgba(0,0,0,.1)"}`, overflow: "hidden", zIndex: 30, animation: "fadeUp .2s ease-out" }}>
                 <div style={{ padding: 20, textAlign: "center", borderBottom: `1px solid ${theme.border}` }}>
-                  <div style={{ width: 48, height: 48, borderRadius: 14, background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 600, margin: "0 auto 8px" }}>RG</div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>Richi Gonzalez</div>
-                  <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>Administrador BI</div>
+                  <div style={{ width: 48, height: 48, borderRadius: 14, background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 600, margin: "0 auto 8px" }}{user.avatar}</div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{user.name}</div>
+                  <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>{user.role}</div>
                 </div>
                 <div style={{ padding: 8 }}>
                   <button onClick={onLogout} style={{ width: "100%", padding: "10px 14px", borderRadius: 12, border: "none", background: dark ? "#2A1215" : "#FEF2F2", color: "#EF4444", cursor: "pointer", fontSize: 13, fontWeight: 500, display: "flex", alignItems: "center", gap: 10 }}>
@@ -583,7 +713,7 @@ function Dashboard({ user, onLogout }) {
       <div style={{ padding: "24px 28px", maxWidth: 1280, margin: "0 auto" }}>
         <div style={{ display: "flex", gap: 20, marginBottom: 24, animation: "fadeUp .5s ease-out" }}>
           <div style={{ flex: 1 }}>
-            <h1 style={{ fontSize: 26, fontWeight: 500, color: theme.text, letterSpacing: "-0.5px" }}>Bienvenido, Richi</h1>
+            <h1 style={{ fontSize: 26, fontWeight: 500, color: theme.text, letterSpacing: "-0.5px" }}>Bienvenido, {user.name.split(" ")[0]}</h1>
             <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 4 }}>Manufactura de Pilar S.A. — {reports.length} reportes configurados</p>
           </div>
           <div style={{ display: "flex", gap: 12 }}>
