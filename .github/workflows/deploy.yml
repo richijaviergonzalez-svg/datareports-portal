@@ -1,4 +1,5 @@
 name: Deploy DataReports to GitHub Pages
+
 on:
   push:
     branches: ['main']
