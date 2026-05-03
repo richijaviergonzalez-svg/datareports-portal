@@ -1,4 +1,0 @@
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://alcdn.msauth.net https://cdnjs.cloudflare.com https://app.powerbi.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; frame-src https://app.powerbi.com https://login.microsoftonline.com; connect-src 'self' https://login.microsoftonline.com https://api.powerbi.com https://analysis.windows.net https://app.powerbi.com https://wabi-south-central-us-redirect.analysis.windows.net https://*.analysis.windows.net https://*.powerbi.com;"
