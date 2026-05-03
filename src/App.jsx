@@ -687,12 +687,12 @@ function Dashboard({ user, onLogout }) {
           <div style={{ position: "relative" }}>
             <button onClick={() => setShowProfile(!showProfile)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 8px 5px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer" }}>
               <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{user.name.split(" ")[0]}</span>
-              <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}{user.avatar}</div>
+              <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}>{user.avatar}</div>
             </button>
             {showProfile && (
               <div style={{ position: "absolute", top: 48, right: 0, width: 260, background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, boxShadow: `0 16px 48px ${dark ? "rgba(0,0,0,.4)" : "rgba(0,0,0,.1)"}`, overflow: "hidden", zIndex: 30, animation: "fadeUp .2s ease-out" }}>
                 <div style={{ padding: 20, textAlign: "center", borderBottom: `1px solid ${theme.border}` }}>
-                  <div style={{ width: 48, height: 48, borderRadius: 14, background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 600, margin: "0 auto 8px" }}{user.avatar}</div>
+                  <div style={{ width: 48, height: 48, borderRadius: 14, background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 600, margin: "0 auto 8px" }}>{user.avatar}</div>
                   <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{user.name}</div>
                   <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>{user.role}</div>
                 </div>
