@@ -1155,7 +1155,9 @@ function SkeletonLoader() {
         </div>
       </div>
     </div>
-  );
+ );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [initializing, setInitializing] = useState(true);
