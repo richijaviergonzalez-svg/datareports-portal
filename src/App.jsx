@@ -1193,6 +1193,17 @@ function Dashboard({ user, onLogout }) {
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", borderBottom: `1px solid ${theme.border}`, flexShrink: 0 }}>
               <div style={{ width: 8, height: 8, borderRadius: 4, background: selectedReport.status === "live" ? "#10B981" : selectedReport.status === "maintenance" ? "#EF4444" : "#F59E0B", animation: selectedReport.status === "live" ? "breathe 3s ease-in-out infinite" : "none" }}/>
               <span style={{ fontSize: 11, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>Report: {selectedReport.id.substring(0, 16)}...</span>
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 10, color: theme.textMuted }}>Zoom:</span>
+                {[75, 100, 125, 150].map(z => (
+                  <button key={z} onClick={() => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); if(c){ const e = powerbiService.get(c); if(e) e.setZoom(z/100); }}}
+                    style={{ padding: "3px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", fontSize: 10, color: theme.textSecondary, transition: "all .15s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = T.teal; e.currentTarget.style.color = "white"; e.currentTarget.style.borderColor = T.teal; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = theme.bgSurface; e.currentTarget.style.color = theme.textSecondary; e.currentTarget.style.borderColor = theme.border; }}>
+                    {z}%
+                  </button>
+                ))}
+              </div>
             </div>
             <div style={{ flex: 1, overflow: "hidden" }}>
               {selectedReport.status === "maintenance" ? (
