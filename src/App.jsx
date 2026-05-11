@@ -1184,6 +1184,10 @@ function Dashboard({ user, onLogout }) {
               <svg width="14" height="14" viewBox="0 0 16 16"><path d="M2 5V3a1 1 0 0 1 1-1h2m6 0h2a1 1 0 0 1 1 1v2m0 6v2a1 1 0 0 1-1 1h-2m-6 0H3a1 1 0 0 1-1-1v-2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
               Pantalla completa
             </button>
+            <button onClick={() => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); if(c){ const e = powerbiService.get(c); if(e) e.print(); }}} style={{ padding: "6px 14px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", fontSize: 11, color: theme.textSecondary, display: "flex", alignItems: "center", gap: 4, transition: "all .2s" }}>
+              <svg width="14" height="14" viewBox="0 0 16 16"><path d="M4 4V2h8v2m-8 4H2v5h2m8 0h2V8h-2M4 11h8v3H4v-3z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Imprimir / PDF
+            </button>
             <StatusBadge status={selectedReport.status} dark={dark}/>
           </div>
         </div>
