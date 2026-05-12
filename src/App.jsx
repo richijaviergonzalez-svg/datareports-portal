@@ -842,7 +842,7 @@ function KpiCards({ dark, reports, favorites, recentViews }) {
 function HealthBadge({ report, dark }) {
   const theme = dark ? darkTheme : lightTheme;
   // Simulate freshness based on report status
-  const statuses = { live: { label: "Datos frescos", color: "#10B981", bg: dark ? "#10B98115" : "#D1FAE5" }, draft: { label: "Sin datos", color: "#F59E0B", bg: dark ? "#F59E0B15" : "#FEF3C7" }, maintenance: { label: "Sin conexión", color: "#EF4444", bg: dark ? "#EF444415" : "#FEE2E2" } };
+  const statuses = { live: { label: "Datos Actualizados", color: "#10B981", bg: dark ? "#10B98115" : "#D1FAE5" }, draft: { label: "Sin datos", color: "#F59E0B", bg: dark ? "#F59E0B15" : "#FEF3C7" }, maintenance: { label: "Sin conexión", color: "#EF4444", bg: dark ? "#EF444415" : "#FEE2E2" } };
   const s = statuses[report.status] || statuses.live;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 6, background: s.bg, fontSize: 9, fontWeight: 500, color: s.color }}>
