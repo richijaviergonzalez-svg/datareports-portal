@@ -779,7 +779,7 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
           </div>
           <div className="welcome-time" style={{ textAlign: "right" }}>
             <div style={{ fontSize: 32, fontWeight: 300, color: T.teal, fontFamily: "'JetBrains Mono', monospace" }}>
-              {time.toLocaleTimeString("es-PY", { hour: "2-digit", minute: "2-digit" })}
+              {time.toLocaleTimeString("es-PY", { hour: hour: "2-digit", minute: "2-digit", hour12: false })}
             </div>
           </div>
         </div>
