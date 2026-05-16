@@ -16,6 +16,21 @@ function json(statusCode, body) {
   };
 }
 
+function getRequestsStore() {
+  const siteID = process.env.NETLIFY_SITE_ID || process.env.SITE_ID;
+  const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.NETLIFY_AUTH_TOKEN;
+
+  if (siteID && token) {
+    return getStore({
+      name: STORE_NAME,
+      siteID,
+      token,
+    });
+  }
+
+  return getStore(STORE_NAME);
+}
+
 function normalizeRequest(request = {}) {
   const now = new Date().toISOString();
 
@@ -60,7 +75,7 @@ async function writeRequests(store, requests) {
 
 exports.handler = async (event) => {
   try {
-    const store = getStore(STORE_NAME);
+    const store = getRequestsStore();
     const method = event.httpMethod;
 
     if (method === "GET") {
@@ -78,6 +93,7 @@ exports.handler = async (event) => {
 
       return json(200, {
         ok: true,
+        source: "netlify-blobs",
         requests: visibleRequests,
       });
     }
@@ -97,6 +113,7 @@ exports.handler = async (event) => {
 
       return json(200, {
         ok: true,
+        source: "netlify-blobs",
         request: incoming,
         requests: updated,
       });
@@ -131,6 +148,7 @@ exports.handler = async (event) => {
 
       return json(200, {
         ok: true,
+        source: "netlify-blobs",
         requests: updated,
       });
     }
