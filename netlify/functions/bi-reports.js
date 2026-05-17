@@ -32,15 +32,8 @@ function getReportsStore() {
   return getStore(STORE_NAME);
 }
 
-function isAdminRequest(event) {
-  const headers = event.headers || {};
-  const email =
-    headers["x-user-email"] ||
-    headers["X-User-Email"] ||
-    headers["x-user"] ||
-    "";
-
-  const adminEmails = String(
+function getAdminEmails() {
+  return String(
     process.env.ADMIN_EMAILS ||
       process.env.VITE_ADMIN_EMAILS ||
       "richi.gonzalez@pilarpy.onmicrosoft.com"
@@ -48,13 +41,50 @@ function isAdminRequest(event) {
     .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
+}
 
-  return adminEmails.includes(String(email).trim().toLowerCase());
+function getRequestUserEmail(event) {
+  const h = event.headers || {};
+
+  return String(
+    h["x-user-email"] ||
+      h["X-User-Email"] ||
+      h["x-user"] ||
+      h["X-User"] ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isAdminRequest(event) {
+  const email = getRequestUserEmail(event);
+  const adminEmails = getAdminEmails();
+
+  return adminEmails.includes(email);
 }
 
 function normalizeStatus(status) {
   const allowed = ["live", "draft", "maintenance"];
   return allowed.includes(status) ? status : "live";
+}
+
+function normalizeVisibilityMode(mode) {
+  const allowed = ["all", "admins", "emails", "domains"];
+  return allowed.includes(mode) ? mode : "all";
+}
+
+function normalizeList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 function normalizeReport(report = {}) {
@@ -75,15 +105,44 @@ function normalizeReport(report = {}) {
     audience: String(report.audience || "Corporativo").trim(),
     accessLevel: String(report.accessLevel || "Corporativo").trim(),
     dataSource: String(report.dataSource || "Power BI Service").trim(),
-    refreshFrequency: String(report.refreshFrequency || "Según actualización del dataset").trim(),
+    refreshFrequency: String(
+      report.refreshFrequency || "Según actualización del dataset"
+    ).trim(),
     criticality: String(report.criticality || "media").trim(),
     internalNotes: String(report.internalNotes || "").trim(),
+
+    visibilityMode: normalizeVisibilityMode(report.visibilityMode),
+    allowedEmails: normalizeList(report.allowedEmails),
+    allowedDomains: normalizeList(report.allowedDomains),
 
     createdAt: report.createdAt || now,
     updatedAt: now,
     createdBy: String(report.createdBy || "").trim(),
     updatedBy: String(report.updatedBy || "").trim(),
   };
+}
+
+function canUserSeeReport(report, userEmail, isAdmin) {
+  if (isAdmin) return true;
+
+  const normalizedReport = normalizeReport(report);
+  const email = String(userEmail || "").trim().toLowerCase();
+  const domain = email.includes("@") ? email.split("@").pop() : "";
+
+  switch (normalizedReport.visibilityMode) {
+    case "admins":
+      return false;
+
+    case "emails":
+      return normalizedReport.allowedEmails.includes(email);
+
+    case "domains":
+      return normalizedReport.allowedDomains.includes(domain);
+
+    case "all":
+    default:
+      return true;
+  }
 }
 
 async function readJSON(store, key, fallback) {
@@ -121,7 +180,9 @@ function validateReport(report) {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   if (!report.name || report.name.trim().length < 3) {
-    errors.push("El nombre del reporte es obligatorio y debe tener al menos 3 caracteres.");
+    errors.push(
+      "El nombre del reporte es obligatorio y debe tener al menos 3 caracteres."
+    );
   }
 
   if (!report.id || !uuidRegex.test(report.id)) {
@@ -129,7 +190,21 @@ function validateReport(report) {
   }
 
   if (report.groupId && !uuidRegex.test(report.groupId)) {
-    errors.push("El Workspace ID debe tener formato UUID válido o quedar vacío si es My Workspace.");
+    errors.push(
+      "El Workspace ID debe tener formato UUID válido o quedar vacío si es My Workspace."
+    );
+  }
+
+  if (report.visibilityMode === "emails" && !report.allowedEmails.length) {
+    errors.push(
+      "Para visibilidad por usuarios específicos, debés cargar al menos un correo permitido."
+    );
+  }
+
+  if (report.visibilityMode === "domains" && !report.allowedDomains.length) {
+    errors.push(
+      "Para visibilidad por dominios específicos, debés cargar al menos un dominio permitido."
+    );
   }
 
   return errors;
@@ -139,21 +214,37 @@ exports.handler = async (event) => {
   try {
     const store = getReportsStore();
     const method = event.httpMethod;
+    const userEmail = getRequestUserEmail(event);
+    const isAdmin = isAdminRequest(event);
+
+    if (method === "OPTIONS") {
+      return json(200, { ok: true });
+    }
 
     if (method === "GET") {
       const reports = await readJSON(store, REPORTS_KEY, []);
+      const normalized = Array.isArray(reports)
+        ? reports.map(normalizeReport)
+        : [];
+
+      const visibleReports = normalized.filter((report) =>
+        canUserSeeReport(report, userEmail, isAdmin)
+      );
 
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        reports: Array.isArray(reports) ? reports : [],
+        userEmail,
+        isAdmin,
+        reports: visibleReports,
       });
     }
 
-    if (!isAdminRequest(event)) {
+    if (!isAdmin) {
       return json(403, {
         ok: false,
-        error: "No autorizado. Solo administradores pueden modificar el catálogo de reportes.",
+        error:
+          "No autorizado. Solo administradores pueden modificar el catálogo de reportes.",
       });
     }
 
@@ -161,7 +252,13 @@ exports.handler = async (event) => {
       const body = JSON.parse(event.body || "{}");
       const incomingReports = Array.isArray(body.reports) ? body.reports : [];
 
-      const normalized = incomingReports.map(normalizeReport);
+      const normalized = incomingReports.map((report) =>
+        normalizeReport({
+          ...report,
+          updatedBy: userEmail,
+          createdBy: report.createdBy || userEmail,
+        })
+      );
 
       const validationErrors = [];
       const seenIds = new Set();
@@ -172,7 +269,9 @@ exports.handler = async (event) => {
         });
 
         if (seenIds.has(report.id)) {
-          validationErrors.push(`Reporte duplicado: ${report.name} (${report.id})`);
+          validationErrors.push(
+            `Reporte duplicado: ${report.name} (${report.id})`
+          );
         }
 
         seenIds.add(report.id);
@@ -189,7 +288,7 @@ exports.handler = async (event) => {
 
       await appendAudit(store, {
         action: "replace_catalog",
-        userEmail: event.headers["x-user-email"] || "",
+        userEmail,
         count: normalized.length,
       });
 
@@ -202,9 +301,14 @@ exports.handler = async (event) => {
 
     if (method === "PATCH" || method === "POST") {
       const body = JSON.parse(event.body || "{}");
-      const incoming = normalizeReport(body.report || body);
+      const incoming = normalizeReport({
+        ...(body.report || body),
+        updatedBy: userEmail,
+        createdBy: (body.report || body).createdBy || userEmail,
+      });
 
       const errors = validateReport(incoming);
+
       if (errors.length) {
         return json(400, {
           ok: false,
@@ -213,7 +317,9 @@ exports.handler = async (event) => {
       }
 
       const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = Array.isArray(reports) ? reports : [];
+      const existing = Array.isArray(reports)
+        ? reports.map(normalizeReport)
+        : [];
 
       const duplicate = existing.find(
         (report) => report.id === incoming.id && report.id !== body.previousId
@@ -237,7 +343,7 @@ exports.handler = async (event) => {
         action: method === "POST" ? "create_report" : "upsert_report",
         reportId: incoming.id,
         reportName: incoming.name,
-        userEmail: event.headers["x-user-email"] || "",
+        userEmail,
       });
 
       return json(200, {
@@ -260,7 +366,10 @@ exports.handler = async (event) => {
       }
 
       const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = Array.isArray(reports) ? reports : [];
+      const existing = Array.isArray(reports)
+        ? reports.map(normalizeReport)
+        : [];
+
       const removed = existing.find((report) => report.id === reportId);
       const updated = existing.filter((report) => report.id !== reportId);
 
@@ -270,7 +379,7 @@ exports.handler = async (event) => {
         action: "delete_report",
         reportId,
         reportName: removed?.name || "",
-        userEmail: event.headers["x-user-email"] || "",
+        userEmail,
       });
 
       return json(200, {
