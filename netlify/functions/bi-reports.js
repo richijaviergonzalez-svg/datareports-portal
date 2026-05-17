@@ -43,25 +43,49 @@ function getAdminEmails() {
     .filter(Boolean);
 }
 
+function getHeader(event, name) {
+  const headers = event.headers || {};
+  const lowerName = name.toLowerCase();
+
+  const foundKey = Object.keys(headers).find(
+    (key) => key.toLowerCase() === lowerName
+  );
+
+  return foundKey ? headers[foundKey] : "";
+}
+
 function getRequestUserEmail(event) {
-  const h = event.headers || {};
+  const params = event.queryStringParameters || {};
 
   return String(
-    h["x-user-email"] ||
-      h["X-User-Email"] ||
-      h["x-user"] ||
-      h["X-User"] ||
+    getHeader(event, "x-user-email") ||
+      getHeader(event, "x-user") ||
+      params.email ||
+      params.userEmail ||
       ""
   )
     .trim()
     .toLowerCase();
 }
 
+function getRequestAdminFlag(event) {
+  const params = event.queryStringParameters || {};
+
+  const raw =
+    getHeader(event, "x-user-admin") ||
+    getHeader(event, "x-admin") ||
+    params.admin ||
+    params.isAdmin ||
+    "";
+
+  return String(raw).trim().toLowerCase() === "true";
+}
+
 function isAdminRequest(event) {
   const email = getRequestUserEmail(event);
   const adminEmails = getAdminEmails();
 
-  return adminEmails.includes(email);
+  return getRequestAdminFlag(event) || adminEmails.includes(email);
 }
 
 function normalizeStatus(status) {
@@ -82,7 +106,20 @@ function normalizeList(value) {
   }
 
   return String(value || "")
-    .split(",")
+    .split(/[;,\n]/)
+    .map((item) => item.trim().toLowerCase().replace(/^@/, ""))
+    .filter(Boolean);
+}
+
+function normalizeEmailList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(/[;,\n]/)
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
 }
@@ -91,8 +128,8 @@ function normalizeReport(report = {}) {
   const now = new Date().toISOString();
 
   return {
-    id: String(report.id || "").trim(),
-    groupId: String(report.groupId || "").trim(),
+    id: String(report.id || report.reportId || "").trim(),
+    groupId: String(report.groupId || report.workspaceId || "").trim(),
     name: String(report.name || "Reporte sin nombre").trim(),
     category: String(report.category || "Comercial").trim(),
     icon: String(report.icon || "chart-bar").trim(),
@@ -109,14 +146,25 @@ function normalizeReport(report = {}) {
       report.refreshFrequency || "Según actualización del dataset"
     ).trim(),
     criticality: String(report.criticality || "media").trim(),
-    internalNotes: String(report.internalNotes || "").trim(),
+
+    internalNotes: String(
+      report.internalNotes || report.technicalNotes || ""
+    ).trim(),
+    technicalNotes: String(
+      report.technicalNotes || report.internalNotes || ""
+    ).trim(),
 
     visibilityMode: normalizeVisibilityMode(report.visibilityMode),
-    allowedEmails: normalizeList(report.allowedEmails),
+    allowedEmails: normalizeEmailList(report.allowedEmails),
     allowedDomains: normalizeList(report.allowedDomains),
+    visibilityNote: String(report.visibilityNote || "").trim(),
+
+    sortOrder: Number.isFinite(Number(report.sortOrder))
+      ? Number(report.sortOrder)
+      : 999,
 
     createdAt: report.createdAt || now,
-    updatedAt: now,
+    updatedAt: report.updatedAt || now,
     createdBy: String(report.createdBy || "").trim(),
     updatedBy: String(report.updatedBy || "").trim(),
   };
@@ -227,15 +275,17 @@ exports.handler = async (event) => {
         ? reports.map(normalizeReport)
         : [];
 
-      const visibleReports = normalized.filter((report) =>
-        canUserSeeReport(report, userEmail, isAdmin)
-      );
+      const visibleReports = normalized
+        .filter((report) => canUserSeeReport(report, userEmail, isAdmin))
+        .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 
       return json(200, {
         ok: true,
         source: "netlify-blobs",
         userEmail,
         isAdmin,
+        totalReports: normalized.length,
+        visibleReports: visibleReports.length,
         reports: visibleReports,
       });
     }
@@ -252,9 +302,10 @@ exports.handler = async (event) => {
       const body = JSON.parse(event.body || "{}");
       const incomingReports = Array.isArray(body.reports) ? body.reports : [];
 
-      const normalized = incomingReports.map((report) =>
+      const normalized = incomingReports.map((report, index) =>
         normalizeReport({
           ...report,
+          sortOrder: report.sortOrder || index + 1,
           updatedBy: userEmail,
           createdBy: report.createdBy || userEmail,
         })
@@ -301,10 +352,12 @@ exports.handler = async (event) => {
 
     if (method === "PATCH" || method === "POST") {
       const body = JSON.parse(event.body || "{}");
+      const rawReport = body.report || body;
+
       const incoming = normalizeReport({
-        ...(body.report || body),
+        ...rawReport,
         updatedBy: userEmail,
-        createdBy: (body.report || body).createdBy || userEmail,
+        createdBy: rawReport.createdBy || userEmail,
       });
 
       const errors = validateReport(incoming);
@@ -335,7 +388,7 @@ exports.handler = async (event) => {
       const updated = [
         incoming,
         ...existing.filter((report) => report.id !== incoming.id),
-      ];
+      ].sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 
       await writeJSON(store, REPORTS_KEY, updated);
 
