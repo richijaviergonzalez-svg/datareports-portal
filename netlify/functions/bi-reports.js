@@ -1,0 +1,9 @@
+datareports-portal/
+  netlify/
+    functions/
+      bi-requests.js
+      bi-reports.js
+  src/
+    App.jsx
+  package.json
+  netlify.toml
