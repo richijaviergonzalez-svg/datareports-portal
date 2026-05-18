@@ -49,7 +49,7 @@ const withAlpha = (hex, alpha = "18") => `${hex}${alpha}`;
 const darkTheme = { bg: "#0F1117", bgCard: "#181B23", bgSurface: "#1E222D", bgHover: "#252A36", border: "#2A2F3C", borderLight: "#353B4A", text: "#E8ECF4", textSecondary: "#8B93A7", textMuted: "#5C6478" };
 const lightTheme = { bg: "#F7F8FA", bgCard: "#FFFFFF", bgSurface: "#F1F3F5", bgHover: "#E9ECEF", border: "#E2E5EA", borderLight: "#EBEDF0", text: "#111318", textSecondary: "#6B7280", textMuted: "#9CA3AF" };
 
-const ALL_CATEGORIES = ["Abastecimiento", "Retail", "Tiendas", "IH", "Mayoristas", "Comercial", "E-Commerce", "Compras", "Producto", "Marketing", "Recursos Humanos", "Finanzas", "Creditos y Cobranzas", "Deco", "Contabilidad", "Prendas"];
+const ALL_CATEGORIES = ["Abastecimiento", "Retail", "Tiendas", "IH", "Mayoristas", "Comercial", "E-Commerce", "Compras", "Producto", "Marketing", "Recursos Humanos", "Finanzas", "Creditos y Cobranzas", "Deco", "Contabilidad", "Prendas", "Militares"];
 const ICON_OPTIONS = [
   { key: "chart-bar", label: "Barras" }, { key: "gauge", label: "Medidor" }, { key: "boxes", label: "Cajas" },
   { key: "funnel", label: "Embudo" }, { key: "currency", label: "Moneda" }, { key: "people", label: "Personas" },
