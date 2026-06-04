@@ -248,6 +248,14 @@ async function getAccessToken() {
   }
 }
 
+async function getFunctionAuthHeaders(extra = {}) {
+  const token = await getAccessToken();
+  return {
+    ...extra,
+    Authorization: `Bearer ${token}`,
+  };
+}
+
 // ========================
 // SPARKLINE COMPONENT
 // ========================
@@ -1527,11 +1535,10 @@ function Dashboard({ user, onLogout }) {
 
   const fetchSharedReports = useCallback(async () => {
     try {
-      const params = new URLSearchParams({
-        email: user?.email || "",
-        admin: isAdmin(user?.email) ? "true" : "false",
+      const res = await fetch("/.netlify/functions/bi-reports", {
+        method: "GET",
+        headers: await getFunctionAuthHeaders({ "Accept": "application/json" }),
       });
-      const res = await fetch(`/.netlify/functions/bi-reports?${params.toString()}`, { method: "GET", headers: { "Accept": "application/json" } });
       if (!res.ok) throw new Error("shared-reports-unavailable");
       const data = await res.json();
       if (!Array.isArray(data.reports)) throw new Error("invalid-shared-reports-response");
@@ -1585,11 +1592,10 @@ function Dashboard({ user, onLogout }) {
     try {
       const res = await fetch("/.netlify/functions/bi-reports", {
         method: "PUT",
-        headers: {
+        headers: await getFunctionAuthHeaders({
           "Content-Type": "application/json",
           "Accept": "application/json",
-          "x-user-email": user?.email || "",
-        },
+        }),
         body: JSON.stringify({ reports: cleanReports, user: { name: user?.name, email: user?.email } }),
       });
       if (!res.ok) {
@@ -1603,7 +1609,7 @@ function Dashboard({ user, onLogout }) {
       try {
         const confirm = await fetch("/.netlify/functions/bi-reports", {
           method: "GET",
-          headers: { "Accept": "application/json" },
+          headers: await getFunctionAuthHeaders({ "Accept": "application/json" }),
         });
         if (confirm.ok) {
           const confirmData = await confirm.json();
@@ -1753,13 +1759,9 @@ function Dashboard({ user, onLogout }) {
 
   const fetchSharedRequests = useCallback(async () => {
     try {
-      const params = new URLSearchParams({
-        email: user?.email || "",
-        admin: isAdmin(user?.email) ? "true" : "false",
-      });
-      const res = await fetch(`/.netlify/functions/bi-requests?${params.toString()}`, {
+      const res = await fetch("/.netlify/functions/bi-requests", {
         method: "GET",
-        headers: { "Accept": "application/json" },
+        headers: await getFunctionAuthHeaders({ "Accept": "application/json" }),
       });
       if (!res.ok) throw new Error("shared-requests-unavailable");
       const data = await res.json();
@@ -1776,14 +1778,14 @@ function Dashboard({ user, onLogout }) {
   }, [user?.email, reports, favorites, recentViews, notifications, saveAll]);
 
   useEffect(() => {
-    if (loaded) fetchSharedRequests();
-  }, [loaded, fetchSharedRequests]);
+    if (loaded && user?.email) fetchSharedRequests();
+  }, [loaded, user?.email, fetchSharedRequests]);
 
   const pushSharedRequest = async (request) => {
     try {
       const res = await fetch("/.netlify/functions/bi-requests", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        headers: await getFunctionAuthHeaders({ "Content-Type": "application/json", "Accept": "application/json" }),
         body: JSON.stringify({ request }),
       });
       if (!res.ok) throw new Error("request-sync-failed");
@@ -1806,7 +1808,7 @@ function Dashboard({ user, onLogout }) {
     try {
       const res = await fetch("/.netlify/functions/bi-requests", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        headers: await getFunctionAuthHeaders({ "Content-Type": "application/json", "Accept": "application/json" }),
         body: JSON.stringify({ requestId, status }),
       });
       if (!res.ok) throw new Error("status-sync-failed");

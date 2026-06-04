@@ -1,4 +1,5 @@
 const { getStore } = require("@netlify/blobs");
+const { authenticate } = require("./_auth");
 
 const STORE_NAME = "datareports-bi";
 const REPORTS_KEY = "reports.json";
@@ -7,6 +8,7 @@ const AUDIT_KEY = "reports-audit.json";
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
+  Vary: "Authorization",
 };
 
 function json(statusCode, body) {
@@ -30,62 +32,6 @@ function getReportsStore() {
   }
 
   return getStore(STORE_NAME);
-}
-
-function getAdminEmails() {
-  return String(
-    process.env.ADMIN_EMAILS ||
-      process.env.VITE_ADMIN_EMAILS ||
-      "richi.gonzalez@pilarpy.onmicrosoft.com"
-  )
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function getHeader(event, name) {
-  const headers = event.headers || {};
-  const lowerName = name.toLowerCase();
-
-  const foundKey = Object.keys(headers).find(
-    (key) => key.toLowerCase() === lowerName
-  );
-
-  return foundKey ? headers[foundKey] : "";
-}
-
-function getRequestUserEmail(event) {
-  const params = event.queryStringParameters || {};
-
-  return String(
-    getHeader(event, "x-user-email") ||
-      getHeader(event, "x-user") ||
-      params.email ||
-      params.userEmail ||
-      ""
-  )
-    .trim()
-    .toLowerCase();
-}
-
-function getRequestAdminFlag(event) {
-  const params = event.queryStringParameters || {};
-
-  const raw =
-    getHeader(event, "x-user-admin") ||
-    getHeader(event, "x-admin") ||
-    params.admin ||
-    params.isAdmin ||
-    "";
-
-  return String(raw).trim().toLowerCase() === "true";
-}
-
-function isAdminRequest(event) {
-  const email = getRequestUserEmail(event);
-  const adminEmails = getAdminEmails();
-
-  return getRequestAdminFlag(event) || adminEmails.includes(email);
 }
 
 function normalizeStatus(status) {
@@ -260,14 +206,23 @@ function validateReport(report) {
 
 exports.handler = async (event) => {
   try {
-    const store = getReportsStore();
     const method = event.httpMethod;
-    const userEmail = getRequestUserEmail(event);
-    const isAdmin = isAdminRequest(event);
 
     if (method === "OPTIONS") {
       return json(200, { ok: true });
     }
+
+    const auth = await authenticate(event);
+    if (!auth.ok) {
+      return json(auth.statusCode || 401, {
+        ok: false,
+        error: auth.error,
+      });
+    }
+
+    const store = getReportsStore();
+    const userEmail = auth.userEmail;
+    const isAdmin = auth.isAdmin;
 
     if (method === "GET") {
       const reports = await readJSON(store, REPORTS_KEY, []);
@@ -373,12 +328,15 @@ exports.handler = async (event) => {
       const existing = Array.isArray(reports)
         ? reports.map(normalizeReport)
         : [];
+      const previousId = String(
+        body.previousId || (method === "PATCH" ? incoming.id : "")
+      ).trim();
 
       const duplicate = existing.find(
-        (report) => report.id === incoming.id && report.id !== body.previousId
+        (report) => report.id === incoming.id && report.id !== previousId
       );
 
-      if (duplicate && duplicate.id !== incoming.id) {
+      if (duplicate) {
         return json(400, {
           ok: false,
           errors: [`Ya existe un reporte con el mismo Report ID: ${incoming.id}`],
@@ -387,7 +345,9 @@ exports.handler = async (event) => {
 
       const updated = [
         incoming,
-        ...existing.filter((report) => report.id !== incoming.id),
+        ...existing.filter(
+          (report) => report.id !== incoming.id && report.id !== previousId
+        ),
       ].sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 
       await writeJSON(store, REPORTS_KEY, updated);
