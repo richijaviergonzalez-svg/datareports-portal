@@ -10,11 +10,22 @@ import * as pbi from "powerbi-client";
 ╚══════════════════════════════════════════════════════════════╝
 */
 
+const getRedirectUri = () => {
+  const currentOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  const configuredRedirectUri = import.meta.env.VITE_REDIRECT_URI || currentOrigin;
+  const isPreviewOrLocal =
+    currentOrigin.includes("deploy-preview-") ||
+    currentOrigin.includes("localhost") ||
+    currentOrigin.includes("127.0.0.1");
+
+  return isPreviewOrLocal ? currentOrigin : configuredRedirectUri;
+};
+
 const CONFIG = {
   tenantId: import.meta.env.VITE_TENANT_ID || "0cd4c62a-f014-46ba-821f-a1361b7fcb06",
   clientId: import.meta.env.VITE_CLIENT_ID || "e2992f66-278a-4c4d-a65b-a84a3d0b4812",
   authority: `https://login.microsoftonline.com/${import.meta.env.VITE_TENANT_ID || "0cd4c62a-f014-46ba-821f-a1361b7fcb06"}`,
-  redirectUri: import.meta.env.VITE_REDIRECT_URI || "https://datareports-pilar.netlify.app",
+  redirectUri: getRedirectUri(),
   scopes: [
     "https://analysis.windows.net/powerbi/api/Report.Read.All",
     "https://analysis.windows.net/powerbi/api/Workspace.Read.All",
@@ -25,6 +36,13 @@ const CONFIG = {
 const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || "richi.gonzalez@pilarpy.onmicrosoft.com").split(",").map(e => e.trim().toLowerCase());
 
 const isAdmin = (email) => ADMIN_EMAILS.includes((email || "").toLowerCase());
+
+const buildUserFromAccount = (account) => ({
+  name: account.name || account.username,
+  email: account.username,
+  role: isAdmin(account.username) ? "Administrador BI" : "Usuario BI",
+  avatar: (account.name || "U").split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase(),
+});
 
 const DEFAULT_REPORTS = [
   { id: "d48d43aa-2b9a-4b72-8607-b3ed143d130a", groupId: "a4ea35c6-d88d-4537-9599-29515db688fa", name: "Comparativo de Ventas por Familia", category: "Abastecimiento", icon: "boxes", status: "live", description: "Análisis comparativo de ventas desglosado por familia de productos con tendencias y variaciones." },
@@ -217,7 +235,7 @@ let msalInstance = null;
 async function getMsalInstance() {
   if (!msalInstance) {
     msalInstance = new PublicClientApplication({
-      auth: { clientId: CONFIG.clientId, authority: CONFIG.authority, redirectUri: CONFIG.redirectUri },
+      auth: { clientId: CONFIG.clientId, authority: CONFIG.authority, redirectUri: CONFIG.redirectUri, navigateToLoginRequestUrl: false },
       cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false },
     });
     await msalInstance.initialize();
@@ -227,13 +245,21 @@ async function getMsalInstance() {
 
 async function msalLogin() {
   const instance = await getMsalInstance();
-  const response = await instance.loginPopup({ scopes: CONFIG.scopes });
-  return response.account;
+  const redirectResponse = await instance.handleRedirectPromise().catch(() => null);
+  const account = redirectResponse?.account || instance.getAllAccounts()[0];
+
+  if (account) {
+    instance.setActiveAccount(account);
+    return account;
+  }
+
+  await instance.loginRedirect({ scopes: CONFIG.scopes });
+  return null;
 }
 
 async function getAccessToken() {
   const instance = await getMsalInstance();
-  const accounts = instance.getAllAccounts();
+  const accounts = [instance.getActiveAccount(), ...instance.getAllAccounts()].filter(Boolean);
   if (accounts.length === 0) throw new Error("Sesión expirada. Por favor, iniciá sesión nuevamente.");
   try {
     const response = await instance.acquireTokenSilent({ scopes: CONFIG.scopes, account: accounts[0] });
@@ -512,12 +538,9 @@ function LoginScreen({ onLogin }) {
     setLoginError(null);
     try {
       const account = await msalLogin();
-      onLogin({
-        name: account.name || account.username,
-        email: account.username,
-        role: isAdmin(account.username) ? "Administrador BI" : "Usuario BI",
-        avatar: (account.name || "U").split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase(),
-      });
+      if (account) {
+        onLogin(buildUserFromAccount(account));
+      }
     } catch (e) {
       setLoginError(e.message || "Error al iniciar sesión");
       setLoading(false);
@@ -2957,15 +2980,12 @@ export default function App() {
     (async () => {
       try {
         const instance = await getMsalInstance();
-        const accounts = instance.getAllAccounts();
+        const redirectResponse = await instance.handleRedirectPromise().catch(() => null);
+        const accounts = [redirectResponse?.account, instance.getActiveAccount(), ...instance.getAllAccounts()].filter(Boolean);
         if (accounts.length > 0) {
           const account = accounts[0];
-          setUser({
-            name: account.name || account.username,
-            email: account.username,
-            role: isAdmin(account.username) ? "Administrador BI" : "Usuario BI",
-            avatar: (account.name || "U").split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase(),
-          });
+          instance.setActiveAccount(account);
+          setUser(buildUserFromAccount(account));
         }
       } catch (e) {}
       setInitializing(false);
