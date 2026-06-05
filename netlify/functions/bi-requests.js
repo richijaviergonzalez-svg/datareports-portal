@@ -1,12 +1,14 @@
 const { getStore } = require("@netlify/blobs");
+const { authenticate } = require("./_auth");
 
 const STORE_NAME = "datareports-bi";
-const REPORTS_KEY = "reports.json";
-const AUDIT_KEY = "reports-audit.json";
+const REQUESTS_KEY = "requests.json";
+const AUDIT_KEY = "requests-audit.json";
 
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
+  Vary: "Authorization",
 };
 
 function json(statusCode, body) {
@@ -17,7 +19,7 @@ function json(statusCode, body) {
   };
 }
 
-function getReportsStore() {
+function getRequestsStore() {
   const siteID = process.env.NETLIFY_SITE_ID || process.env.SITE_ID;
   const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.NETLIFY_AUTH_TOKEN;
 
@@ -32,58 +34,66 @@ function getReportsStore() {
   return getStore(STORE_NAME);
 }
 
-function isAdminRequest(event) {
-  const headers = event.headers || {};
-  const email =
-    headers["x-user-email"] ||
-    headers["X-User-Email"] ||
-    headers["x-user"] ||
-    "";
-
-  const adminEmails = String(
-    process.env.ADMIN_EMAILS ||
-      process.env.VITE_ADMIN_EMAILS ||
-      "richi.gonzalez@pilarpy.onmicrosoft.com"
-  )
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-
-  return adminEmails.includes(String(email).trim().toLowerCase());
+function normalizeRequestType(type) {
+  const allowed = ["access", "change", "issue", "new-report"];
+  return allowed.includes(type) ? type : "access";
 }
 
-function normalizeStatus(status) {
-  const allowed = ["live", "draft", "maintenance"];
-  return allowed.includes(status) ? status : "live";
+function normalizeRequestStatus(status) {
+  const allowed = ["new", "in-review", "approved", "rejected", "done"];
+  return allowed.includes(status) ? status : "new";
 }
 
-function normalizeReport(report = {}) {
+function normalizePriority(priority) {
+  const allowed = ["low", "medium", "high", "critical"];
+  return allowed.includes(priority) ? priority : "medium";
+}
+
+function normalizeRequest(request = {}, auth = {}) {
   const now = new Date().toISOString();
+  const id = String(request.id || `REQ-${Date.now()}`).trim();
 
   return {
-    id: String(report.id || "").trim(),
-    groupId: String(report.groupId || "").trim(),
-    name: String(report.name || "Reporte sin nombre").trim(),
-    category: String(report.category || "Comercial").trim(),
-    icon: String(report.icon || "chart-bar").trim(),
-    status: normalizeStatus(report.status),
-    description: String(report.description || "").trim(),
-
-    originalUrl: String(report.originalUrl || report.url || "").trim(),
-
-    owner: String(report.owner || "Equipo BI").trim(),
-    audience: String(report.audience || "Corporativo").trim(),
-    accessLevel: String(report.accessLevel || "Corporativo").trim(),
-    dataSource: String(report.dataSource || "Power BI Service").trim(),
-    refreshFrequency: String(report.refreshFrequency || "Según actualización del dataset").trim(),
-    criticality: String(report.criticality || "media").trim(),
-    internalNotes: String(report.internalNotes || "").trim(),
-
-    createdAt: report.createdAt || now,
-    updatedAt: now,
-    createdBy: String(report.createdBy || "").trim(),
-    updatedBy: String(report.updatedBy || "").trim(),
+    id,
+    type: normalizeRequestType(request.type),
+    typeLabel: String(request.typeLabel || "").trim(),
+    title: String(request.title || "").trim(),
+    reportId: String(request.reportId || "").trim(),
+    reportName: String(request.reportName || "Reporte").trim(),
+    reportCategory: String(request.reportCategory || "").trim(),
+    details: String(request.details || "").trim(),
+    userName: String(auth.userName || request.userName || "Usuario").trim(),
+    userEmail: String(auth.userEmail || request.userEmail || "")
+      .trim()
+      .toLowerCase(),
+    status: normalizeRequestStatus(request.status),
+    priority: normalizePriority(request.priority),
+    adminNote: String(request.adminNote || "").trim(),
+    createdAt: request.createdAt || now,
+    updatedAt: request.updatedAt || now,
   };
+}
+
+function validateRequest(request) {
+  const errors = [];
+
+  if (!request.reportId) {
+    errors.push("El reporte es obligatorio.");
+  }
+
+  if (!request.details || request.details.length < 8) {
+    errors.push("El detalle debe tener al menos 8 caracteres.");
+  }
+
+  if (!request.userEmail) {
+    errors.push("No se pudo identificar al usuario.");
+  }
+
+  return errors;
+}
+
+function canUserSeeRequest(request, auth) {
+  return auth.isAdmin || request.userEmail === auth.userEmail;
 }
 
 async function readJSON(store, key, fallback) {
@@ -114,97 +124,55 @@ async function appendAudit(store, entry) {
   await writeJSON(store, AUDIT_KEY, updated);
 }
 
-function validateReport(report) {
-  const errors = [];
-
-  const uuidRegex =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-  if (!report.name || report.name.trim().length < 3) {
-    errors.push("El nombre del reporte es obligatorio y debe tener al menos 3 caracteres.");
-  }
-
-  if (!report.id || !uuidRegex.test(report.id)) {
-    errors.push("El Report ID debe tener formato UUID válido.");
-  }
-
-  if (report.groupId && !uuidRegex.test(report.groupId)) {
-    errors.push("El Workspace ID debe tener formato UUID válido o quedar vacío si es My Workspace.");
-  }
-
-  return errors;
-}
-
 exports.handler = async (event) => {
   try {
-    const store = getReportsStore();
     const method = event.httpMethod;
 
-    if (method === "GET") {
-      const reports = await readJSON(store, REPORTS_KEY, []);
-
-      return json(200, {
-        ok: true,
-        source: "netlify-blobs",
-        reports: Array.isArray(reports) ? reports : [],
-      });
+    if (method === "OPTIONS") {
+      return json(200, { ok: true });
     }
 
-    if (!isAdminRequest(event)) {
-      return json(403, {
+    const auth = await authenticate(event);
+    if (!auth.ok) {
+      return json(auth.statusCode || 401, {
         ok: false,
-        error: "No autorizado. Solo administradores pueden modificar el catálogo de reportes.",
+        error: auth.error,
       });
     }
 
-    if (method === "PUT") {
-      const body = JSON.parse(event.body || "{}");
-      const incomingReports = Array.isArray(body.reports) ? body.reports : [];
+    const store = getRequestsStore();
 
-      const normalized = incomingReports.map(normalizeReport);
-
-      const validationErrors = [];
-      const seenIds = new Set();
-
-      normalized.forEach((report) => {
-        validateReport(report).forEach((error) => {
-          validationErrors.push(`${report.name}: ${error}`);
-        });
-
-        if (seenIds.has(report.id)) {
-          validationErrors.push(`Reporte duplicado: ${report.name} (${report.id})`);
-        }
-
-        seenIds.add(report.id);
-      });
-
-      if (validationErrors.length) {
-        return json(400, {
-          ok: false,
-          errors: validationErrors,
-        });
-      }
-
-      await writeJSON(store, REPORTS_KEY, normalized);
-
-      await appendAudit(store, {
-        action: "replace_catalog",
-        userEmail: event.headers["x-user-email"] || "",
-        count: normalized.length,
-      });
+    if (method === "GET") {
+      const requests = await readJSON(store, REQUESTS_KEY, []);
+      const normalized = Array.isArray(requests)
+        ? requests.map((request) => normalizeRequest(request))
+        : [];
+      const visibleRequests = normalized
+        .filter((request) => canUserSeeRequest(request, auth))
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        reports: normalized,
+        userEmail: auth.userEmail,
+        isAdmin: auth.isAdmin,
+        totalRequests: normalized.length,
+        visibleRequests: visibleRequests.length,
+        requests: visibleRequests,
       });
     }
 
-    if (method === "PATCH" || method === "POST") {
+    if (method === "POST") {
       const body = JSON.parse(event.body || "{}");
-      const incoming = normalizeReport(body.report || body);
+      const incoming = normalizeRequest(
+        {
+          ...(body.request || body),
+          status: "new",
+        },
+        auth
+      );
 
-      const errors = validateReport(incoming);
+      const errors = validateRequest(incoming);
       if (errors.length) {
         return json(400, {
           ok: false,
@@ -212,72 +180,121 @@ exports.handler = async (event) => {
         });
       }
 
-      const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = Array.isArray(reports) ? reports : [];
-
-      const duplicate = existing.find(
-        (report) => report.id === incoming.id && report.id !== body.previousId
+      const requests = await readJSON(store, REQUESTS_KEY, []);
+      const existing = Array.isArray(requests)
+        ? requests.map((request) => normalizeRequest(request))
+        : [];
+      const updated = [incoming, ...existing].sort(
+        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
       );
 
-      if (duplicate && duplicate.id !== incoming.id) {
-        return json(400, {
-          ok: false,
-          errors: [`Ya existe un reporte con el mismo Report ID: ${incoming.id}`],
-        });
-      }
-
-      const updated = [
-        incoming,
-        ...existing.filter((report) => report.id !== incoming.id),
-      ];
-
-      await writeJSON(store, REPORTS_KEY, updated);
-
+      await writeJSON(store, REQUESTS_KEY, updated);
       await appendAudit(store, {
-        action: method === "POST" ? "create_report" : "upsert_report",
-        reportId: incoming.id,
-        reportName: incoming.name,
-        userEmail: event.headers["x-user-email"] || "",
+        action: "create_request",
+        requestId: incoming.id,
+        reportId: incoming.reportId,
+        userEmail: auth.userEmail,
       });
 
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        report: incoming,
-        reports: updated,
+        request: incoming,
+        requests: updated.filter((request) => canUserSeeRequest(request, auth)),
+      });
+    }
+
+    if (!auth.isAdmin) {
+      return json(403, {
+        ok: false,
+        error: "No autorizado. Solo administradores pueden modificar solicitudes.",
+      });
+    }
+
+    if (method === "PATCH") {
+      const body = JSON.parse(event.body || "{}");
+      const requestId = String(body.requestId || body.id || "").trim();
+
+      if (!requestId) {
+        return json(400, {
+          ok: false,
+          error: "El requestId es obligatorio.",
+        });
+      }
+
+      const requests = await readJSON(store, REQUESTS_KEY, []);
+      const existing = Array.isArray(requests)
+        ? requests.map((request) => normalizeRequest(request))
+        : [];
+      let changed = false;
+
+      const updated = existing.map((request) => {
+        if (request.id !== requestId) return request;
+        changed = true;
+
+        return normalizeRequest({
+          ...request,
+          status: body.status || request.status,
+          priority: body.priority || request.priority,
+          adminNote:
+            typeof body.adminNote === "string" ? body.adminNote : request.adminNote,
+          updatedAt: new Date().toISOString(),
+        });
+      });
+
+      if (!changed) {
+        return json(404, {
+          ok: false,
+          error: "Solicitud no encontrada.",
+        });
+      }
+
+      await writeJSON(store, REQUESTS_KEY, updated);
+      await appendAudit(store, {
+        action: "update_request",
+        requestId,
+        status: body.status || "",
+        userEmail: auth.userEmail,
+      });
+
+      return json(200, {
+        ok: true,
+        source: "netlify-blobs",
+        requests: updated.sort(
+          (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+        ),
       });
     }
 
     if (method === "DELETE") {
       const params = event.queryStringParameters || {};
-      const reportId = String(params.id || "").trim();
+      const requestId = String(params.id || params.requestId || "").trim();
 
-      if (!reportId) {
+      if (!requestId) {
         return json(400, {
           ok: false,
-          error: "El parámetro id es obligatorio.",
+          error: "El requestId es obligatorio.",
         });
       }
 
-      const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = Array.isArray(reports) ? reports : [];
-      const removed = existing.find((report) => report.id === reportId);
-      const updated = existing.filter((report) => report.id !== reportId);
+      const requests = await readJSON(store, REQUESTS_KEY, []);
+      const existing = Array.isArray(requests)
+        ? requests.map((request) => normalizeRequest(request))
+        : [];
+      const updated = existing.filter((request) => request.id !== requestId);
 
-      await writeJSON(store, REPORTS_KEY, updated);
-
+      await writeJSON(store, REQUESTS_KEY, updated);
       await appendAudit(store, {
-        action: "delete_report",
-        reportId,
-        reportName: removed?.name || "",
-        userEmail: event.headers["x-user-email"] || "",
+        action: "delete_request",
+        requestId,
+        userEmail: auth.userEmail,
       });
 
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        deleted: reportId,
-        reports: updated,
+        deleted: requestId,
+        requests: updated,
       });
     }
 
@@ -286,7 +303,7 @@ exports.handler = async (event) => {
       error: "Method not allowed",
     });
   } catch (error) {
-    console.error("bi-reports function error:", error);
+    console.error("bi-requests function error:", error);
 
     return json(500, {
       ok: false,
