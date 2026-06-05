@@ -68,14 +68,19 @@ export async function createBiRequest({ getAccessToken, request }) {
   return readJson(response, "request-sync-failed");
 }
 
-export async function updateBiRequestStatus({ getAccessToken, requestId, status }) {
+export async function updateBiRequestStatus({ getAccessToken, requestId, status, priority, adminNote }) {
+  const payload = { requestId };
+  if (status !== undefined) payload.status = status;
+  if (priority !== undefined) payload.priority = priority;
+  if (adminNote !== undefined) payload.adminNote = adminNote;
+
   const response = await fetch(REQUESTS_ENDPOINT, {
     method: "PATCH",
     headers: await buildAuthHeaders(getAccessToken, {
       "Content-Type": "application/json",
       Accept: "application/json",
     }),
-    body: JSON.stringify({ requestId, status }),
+    body: JSON.stringify(payload),
   });
 
   return readJson(response, "status-sync-failed");
