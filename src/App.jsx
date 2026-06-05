@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { PublicClientApplication } from "@azure/msal-browser";
 import * as pbi from "powerbi-client";
+import {
+  createBiRequest,
+  fetchBiRequests,
+  fetchReportsCatalog,
+  saveReportsCatalog,
+  updateBiRequestStatus,
+} from "./lib/biApi.js";
 
 /*
 ╔══════════════════════════════════════════════════════════════╗
@@ -272,14 +279,6 @@ async function getAccessToken() {
       throw new Error("No se pudo renovar la sesión. Por favor, cerrá sesión y volvé a iniciar.");
     }
   }
-}
-
-async function getFunctionAuthHeaders(extra = {}) {
-  const token = await getAccessToken();
-  return {
-    ...extra,
-    Authorization: `Bearer ${token}`,
-  };
 }
 
 // ========================
@@ -1558,12 +1557,7 @@ function Dashboard({ user, onLogout }) {
 
   const fetchSharedReports = useCallback(async () => {
     try {
-      const res = await fetch("/.netlify/functions/bi-reports", {
-        method: "GET",
-        headers: await getFunctionAuthHeaders({ "Accept": "application/json" }),
-      });
-      if (!res.ok) throw new Error("shared-reports-unavailable");
-      const data = await res.json();
+      const data = await fetchReportsCatalog({ getAccessToken });
       if (!Array.isArray(data.reports)) throw new Error("invalid-shared-reports-response");
 
       // Netlify Blobs es la fuente oficial. Si el admin eliminó reportes, también debe verse vacío.
@@ -1613,32 +1607,18 @@ function Dashboard({ user, onLogout }) {
     saveAll(cleanReports, favorites, recentViews, notifications, requests);
 
     try {
-      const res = await fetch("/.netlify/functions/bi-reports", {
-        method: "PUT",
-        headers: await getFunctionAuthHeaders({
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-        }),
-        body: JSON.stringify({ reports: cleanReports, user: { name: user?.name, email: user?.email } }),
+      const data = await saveReportsCatalog({
+        getAccessToken,
+        reports: cleanReports,
+        user: { name: user?.name, email: user?.email },
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "No se pudo sincronizar el catálogo");
-      }
-      const data = await res.json();
       let syncedReports = normalizeReports(data.reports || cleanReports);
 
       // Refetch de confirmación: evita delays visuales si Netlify Blobs demora unos ms.
       try {
-        const confirm = await fetch("/.netlify/functions/bi-reports", {
-          method: "GET",
-          headers: await getFunctionAuthHeaders({ "Accept": "application/json" }),
-        });
-        if (confirm.ok) {
-          const confirmData = await confirm.json();
-          if (Array.isArray(confirmData.reports)) {
-            syncedReports = normalizeReports(confirmData.reports);
-          }
+        const confirmData = await fetchReportsCatalog({ getAccessToken });
+        if (Array.isArray(confirmData.reports)) {
+          syncedReports = normalizeReports(confirmData.reports);
         }
       } catch (confirmError) {
         console.warn("Confirmación de catálogo no disponible:", confirmError);
@@ -1782,12 +1762,7 @@ function Dashboard({ user, onLogout }) {
 
   const fetchSharedRequests = useCallback(async () => {
     try {
-      const res = await fetch("/.netlify/functions/bi-requests", {
-        method: "GET",
-        headers: await getFunctionAuthHeaders({ "Accept": "application/json" }),
-      });
-      if (!res.ok) throw new Error("shared-requests-unavailable");
-      const data = await res.json();
+      const data = await fetchBiRequests({ getAccessToken });
       if (Array.isArray(data.requests)) {
         setRequests(data.requests);
         saveAll(reports, favorites, recentViews, notifications, data.requests);
@@ -1806,13 +1781,7 @@ function Dashboard({ user, onLogout }) {
 
   const pushSharedRequest = async (request) => {
     try {
-      const res = await fetch("/.netlify/functions/bi-requests", {
-        method: "POST",
-        headers: await getFunctionAuthHeaders({ "Content-Type": "application/json", "Accept": "application/json" }),
-        body: JSON.stringify({ request }),
-      });
-      if (!res.ok) throw new Error("request-sync-failed");
-      const data = await res.json();
+      const data = await createBiRequest({ getAccessToken, request });
       if (Array.isArray(data.requests)) {
         setRequests(data.requests);
         saveAll(reports, favorites, recentViews, notifications, data.requests);
@@ -1829,13 +1798,7 @@ function Dashboard({ user, onLogout }) {
 
   const patchSharedRequestStatus = async (requestId, status) => {
     try {
-      const res = await fetch("/.netlify/functions/bi-requests", {
-        method: "PATCH",
-        headers: await getFunctionAuthHeaders({ "Content-Type": "application/json", "Accept": "application/json" }),
-        body: JSON.stringify({ requestId, status }),
-      });
-      if (!res.ok) throw new Error("status-sync-failed");
-      const data = await res.json();
+      const data = await updateBiRequestStatus({ getAccessToken, requestId, status });
       if (Array.isArray(data.requests)) {
         setRequests(data.requests);
         saveAll(reports, favorites, recentViews, notifications, data.requests);
