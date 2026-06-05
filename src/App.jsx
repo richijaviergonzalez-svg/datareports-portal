@@ -15,6 +15,8 @@ import {
 import {
   REQUEST_PRIORITY_LABELS,
   REQUEST_PRIORITY_OPTIONS,
+  REQUEST_ADMIN_NOTE_MAX_LENGTH,
+  REQUEST_DETAIL_MAX_LENGTH,
   REQUEST_STATUS_LABELS,
   REQUEST_STATUS_FLOW,
   REQUEST_STATUS_OPTIONS,
@@ -1758,13 +1760,13 @@ function Dashboard({ user, onLogout }) {
   });
   const requestStats = getRequestStats(visibleRequests);
 
-  const updateRequestWorkflow = (requestId, updates, toastMessage) => {
+  const updateRequestWorkflow = async (requestId, updates, toastMessage) => {
     const updatedRequests = updateRequestStatusInList(requests, requestId, updates, user);
     setRequests(updatedRequests);
     if (selectedRequest?.id === requestId) setSelectedRequest(updatedRequests.find(req => req.id === requestId));
     saveAll(reports, favorites, recentViews, notifications, updatedRequests);
-    patchSharedRequestStatus(requestId, updates);
-    showToast(toastMessage);
+    const synced = await patchSharedRequestStatus(requestId, updates);
+    showToast(synced ? toastMessage : `${toastMessage}; pendiente sincronización`, synced ? "success" : "error");
   };
 
   const updateRequestStatus = (requestId, status) => {
@@ -1968,7 +1970,8 @@ function Dashboard({ user, onLogout }) {
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .6, marginBottom: 8 }}>Nota administrativa</div>
-                      <textarea value={requestAdminNote} onChange={e => setRequestAdminNote(e.target.value)} placeholder="Agregar criterio, responsable, bloqueo o próxima acción..." style={{ width: "100%", minHeight: 82, resize: "vertical", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, padding: 12, outline: "none", fontSize: 12, lineHeight: 1.55, fontFamily: "'Outfit', system-ui" }} />
+                      <textarea value={requestAdminNote} onChange={e => setRequestAdminNote(e.target.value)} maxLength={REQUEST_ADMIN_NOTE_MAX_LENGTH} placeholder="Agregar criterio, responsable, bloqueo o próxima acción..." style={{ width: "100%", minHeight: 82, resize: "vertical", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, padding: 12, outline: "none", fontSize: 12, lineHeight: 1.55, fontFamily: "'Outfit', system-ui" }} />
+                      <div style={{ marginTop: 6, fontSize: 10, color: theme.textMuted, textAlign: "right" }}>{requestAdminNote.length}/{REQUEST_ADMIN_NOTE_MAX_LENGTH}</div>
                       <button onClick={saveRequestAdminNote} style={{ marginTop: 8, width: "100%", padding: "10px 12px", borderRadius: 11, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Guardar nota</button>
                     </div>
                   </div>
@@ -1999,7 +2002,8 @@ function Dashboard({ user, onLogout }) {
                 : "Indicá qué ajuste necesitás: nueva métrica, filtro, visual, cambio de cálculo o mejora de presentación."}
             </p>
           </div>
-          <textarea value={actionDetails} onChange={e => setActionDetails(e.target.value)} placeholder={actionModal.type === "issue" ? "Ej: El reporte no actualiza datos desde ayer..." : "Ej: Agregar filtro por tienda y comparación vs año anterior..."} style={{ width: "100%", minHeight: 120, resize: "vertical", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, padding: 14, outline: "none", fontSize: 13, lineHeight: 1.55, fontFamily: "'Outfit', system-ui" }} />
+          <textarea value={actionDetails} onChange={e => setActionDetails(e.target.value)} maxLength={REQUEST_DETAIL_MAX_LENGTH} placeholder={actionModal.type === "issue" ? "Ej: El reporte no actualiza datos desde ayer..." : "Ej: Agregar filtro por tienda y comparación vs año anterior..."} style={{ width: "100%", minHeight: 120, resize: "vertical", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, padding: 14, outline: "none", fontSize: 13, lineHeight: 1.55, fontFamily: "'Outfit', system-ui" }} />
+          <div style={{ marginTop: 6, fontSize: 10, color: theme.textMuted, textAlign: "right" }}>{actionDetails.length}/{REQUEST_DETAIL_MAX_LENGTH}</div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
             <button onClick={() => setActionModal(null)} style={{ padding: "10px 18px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
             <button onClick={submitActionModal} style={{ padding: "10px 20px", borderRadius: 12, border: "none", background: actionModal.type === "issue" ? "#EF4444" : T.teal, color: "white", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{actionModal.type === "issue" ? "Registrar problema" : "Enviar solicitud"}</button>

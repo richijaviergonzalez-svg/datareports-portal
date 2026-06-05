@@ -4,6 +4,18 @@ const { authenticate } = require("./_auth");
 const STORE_NAME = "datareports-bi";
 const REQUESTS_KEY = "requests.json";
 const AUDIT_KEY = "requests-audit.json";
+const MAX_BODY_BYTES = 32 * 1024;
+const MAX_REQUESTS = 500;
+const MAX_DETAIL_LENGTH = 2000;
+const MAX_ADMIN_NOTE_LENGTH = 1200;
+const MAX_TITLE_LENGTH = 160;
+const MAX_LABEL_LENGTH = 80;
+const MAX_NAME_LENGTH = 120;
+const MAX_ID_LENGTH = 80;
+
+const REQUEST_TYPES = ["access", "change", "issue", "new-report"];
+const REQUEST_STATUSES = ["new", "analysis", "progress", "resolved", "rejected"];
+const REQUEST_PRIORITIES = ["baja", "media", "alta", "critica"];
 
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
@@ -34,6 +46,41 @@ function json(statusCode, body) {
   };
 }
 
+function trimString(value, maxLength) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function normalizeAlias(value, aliases = {}) {
+  const key = String(value || "").trim();
+  return aliases[key] || key;
+}
+
+function parseJsonBody(event) {
+  const rawBody = event.body || "";
+  const bodyBytes = Buffer.byteLength(rawBody, "utf8");
+
+  if (bodyBytes > MAX_BODY_BYTES) {
+    return {
+      ok: false,
+      statusCode: 413,
+      error: "La solicitud supera el tamaño máximo permitido.",
+    };
+  }
+
+  try {
+    return {
+      ok: true,
+      body: rawBody ? JSON.parse(rawBody) : {},
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      statusCode: 400,
+      error: "El cuerpo de la solicitud no es JSON válido.",
+    };
+  }
+}
+
 function getRequestsStore() {
   const siteID = process.env.NETLIFY_SITE_ID || process.env.SITE_ID;
   const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.NETLIFY_AUTH_TOKEN;
@@ -50,42 +97,57 @@ function getRequestsStore() {
 }
 
 function normalizeRequestType(type) {
-  const allowed = ["access", "change", "issue", "new-report"];
-  return allowed.includes(type) ? type : "access";
+  const normalized = trimString(type, MAX_LABEL_LENGTH);
+  return REQUEST_TYPES.includes(normalized) ? normalized : "access";
 }
 
 function normalizeRequestStatus(status) {
-  const aliases = {
+  const normalized = normalizeAlias(status, {
     "in-review": "analysis",
     approved: "progress",
     done: "resolved",
-  };
-  const normalized = aliases[status] || status;
-  const allowed = ["new", "analysis", "progress", "resolved", "rejected"];
-  return allowed.includes(normalized) ? normalized : "new";
+  });
+  return REQUEST_STATUSES.includes(normalized) ? normalized : "new";
+}
+
+function isValidRequestStatus(status) {
+  const normalized = normalizeAlias(status, {
+    "in-review": "analysis",
+    approved: "progress",
+    done: "resolved",
+  });
+  return REQUEST_STATUSES.includes(normalized);
 }
 
 function normalizePriority(priority) {
-  const aliases = {
+  const normalized = normalizeAlias(priority, {
     low: "baja",
     medium: "media",
     high: "alta",
     critical: "critica",
-  };
-  const normalized = aliases[priority] || priority;
-  const allowed = ["baja", "media", "alta", "critica"];
-  return allowed.includes(normalized) ? normalized : "media";
+  });
+  return REQUEST_PRIORITIES.includes(normalized) ? normalized : "media";
+}
+
+function isValidPriority(priority) {
+  const normalized = normalizeAlias(priority, {
+    low: "baja",
+    medium: "media",
+    high: "alta",
+    critical: "critica",
+  });
+  return REQUEST_PRIORITIES.includes(normalized);
 }
 
 function normalizeHistory(history = []) {
   return (Array.isArray(history) ? history : [])
     .map((entry) => ({
       id: String(entry.id || `HIS-${Date.now()}`).trim(),
-      type: String(entry.type || "event").trim(),
+      type: trimString(entry.type || "event", MAX_LABEL_LENGTH),
       status: normalizeRequestStatus(entry.status),
       priority: normalizePriority(entry.priority),
-      label: String(entry.label || "").trim(),
-      actorName: String(entry.actorName || "Equipo BI").trim(),
+      label: trimString(entry.label || "", MAX_TITLE_LENGTH),
+      actorName: trimString(entry.actorName || "Equipo BI", MAX_NAME_LENGTH),
       actorEmail: String(entry.actorEmail || "").trim().toLowerCase(),
       createdAt: entry.createdAt || new Date().toISOString(),
     }))
@@ -95,24 +157,24 @@ function normalizeHistory(history = []) {
 
 function normalizeRequest(request = {}, auth = {}) {
   const now = new Date().toISOString();
-  const id = String(request.id || `REQ-${Date.now()}`).trim();
+  const id = trimString(request.id || `REQ-${Date.now()}`, MAX_ID_LENGTH);
 
   return {
     id,
     type: normalizeRequestType(request.type),
-    typeLabel: String(request.typeLabel || "").trim(),
-    title: String(request.title || "").trim(),
-    reportId: String(request.reportId || "").trim(),
-    reportName: String(request.reportName || "Reporte").trim(),
-    reportCategory: String(request.reportCategory || "").trim(),
-    details: String(request.details || "").trim(),
-    userName: String(auth.userName || request.userName || "Usuario").trim(),
+    typeLabel: trimString(request.typeLabel || "", MAX_LABEL_LENGTH),
+    title: trimString(request.title || "", MAX_TITLE_LENGTH),
+    reportId: trimString(request.reportId || "", MAX_ID_LENGTH),
+    reportName: trimString(request.reportName || "Reporte", MAX_NAME_LENGTH),
+    reportCategory: trimString(request.reportCategory || "", MAX_LABEL_LENGTH),
+    details: trimString(request.details || "", MAX_DETAIL_LENGTH),
+    userName: trimString(auth.userName || request.userName || "Usuario", MAX_NAME_LENGTH),
     userEmail: String(auth.userEmail || request.userEmail || "")
       .trim()
       .toLowerCase(),
     status: normalizeRequestStatus(request.status),
     priority: normalizePriority(request.priority),
-    adminNote: String(request.adminNote || "").trim(),
+    adminNote: trimString(request.adminNote || "", MAX_ADMIN_NOTE_LENGTH),
     history: normalizeHistory(request.history),
     createdAt: request.createdAt || now,
     updatedAt: request.updatedAt || now,
@@ -122,6 +184,10 @@ function normalizeRequest(request = {}, auth = {}) {
 function validateRequest(request) {
   const errors = [];
 
+  if (!request.id || request.id.length > MAX_ID_LENGTH) {
+    errors.push("El identificador de la solicitud no es válido.");
+  }
+
   if (!request.reportId) {
     errors.push("El reporte es obligatorio.");
   }
@@ -130,11 +196,44 @@ function validateRequest(request) {
     errors.push("El detalle debe tener al menos 8 caracteres.");
   }
 
+  if (request.details.length > MAX_DETAIL_LENGTH) {
+    errors.push(`El detalle no puede superar ${MAX_DETAIL_LENGTH} caracteres.`);
+  }
+
   if (!request.userEmail) {
     errors.push("No se pudo identificar al usuario.");
   }
 
   return errors;
+}
+
+function validatePatchPayload(body = {}) {
+  const errors = [];
+  const hasStatus = Object.prototype.hasOwnProperty.call(body, "status");
+  const hasPriority = Object.prototype.hasOwnProperty.call(body, "priority");
+  const hasAdminNote = Object.prototype.hasOwnProperty.call(body, "adminNote");
+
+  if (!hasStatus && !hasPriority && !hasAdminNote) {
+    errors.push("No hay cambios para aplicar.");
+  }
+
+  if (hasStatus && !isValidRequestStatus(body.status)) {
+    errors.push("Estado de solicitud no permitido.");
+  }
+
+  if (hasPriority && !isValidPriority(body.priority)) {
+    errors.push("Prioridad de solicitud no permitida.");
+  }
+
+  if (hasAdminNote && String(body.adminNote || "").length > MAX_ADMIN_NOTE_LENGTH) {
+    errors.push(`La nota administrativa no puede superar ${MAX_ADMIN_NOTE_LENGTH} caracteres.`);
+  }
+
+  return errors;
+}
+
+function sortRequests(requests = []) {
+  return requests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
 function canUserSeeRequest(request, auth) {
@@ -208,7 +307,15 @@ exports.handler = async (event) => {
     }
 
     if (method === "POST") {
-      const body = JSON.parse(event.body || "{}");
+      const parsed = parseJsonBody(event);
+      if (!parsed.ok) {
+        return json(parsed.statusCode, {
+          ok: false,
+          error: parsed.error,
+        });
+      }
+
+      const body = parsed.body;
       const incoming = normalizeRequest(
         {
           ...(body.request || body),
@@ -242,9 +349,15 @@ exports.handler = async (event) => {
       const existing = Array.isArray(requests)
         ? requests.map((request) => normalizeRequest(request))
         : [];
-      const updated = [incoming, ...existing].sort(
-        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-      );
+
+      if (existing.some((request) => request.id === incoming.id)) {
+        return json(409, {
+          ok: false,
+          error: "Ya existe una solicitud con ese identificador.",
+        });
+      }
+
+      const updated = sortRequests([incoming, ...existing]).slice(0, MAX_REQUESTS);
 
       await writeJSON(store, REQUESTS_KEY, updated);
       await appendAudit(store, {
@@ -270,13 +383,29 @@ exports.handler = async (event) => {
     }
 
     if (method === "PATCH") {
-      const body = JSON.parse(event.body || "{}");
-      const requestId = String(body.requestId || body.id || "").trim();
+      const parsed = parseJsonBody(event);
+      if (!parsed.ok) {
+        return json(parsed.statusCode, {
+          ok: false,
+          error: parsed.error,
+        });
+      }
+
+      const body = parsed.body;
+      const requestId = trimString(body.requestId || body.id || "", MAX_ID_LENGTH);
 
       if (!requestId) {
         return json(400, {
           ok: false,
           error: "El requestId es obligatorio.",
+        });
+      }
+
+      const patchErrors = validatePatchPayload(body);
+      if (patchErrors.length) {
+        return json(400, {
+          ok: false,
+          errors: patchErrors,
         });
       }
 
@@ -343,15 +472,13 @@ exports.handler = async (event) => {
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        requests: updated.sort(
-          (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-        ),
+        requests: sortRequests(updated),
       });
     }
 
     if (method === "DELETE") {
       const params = event.queryStringParameters || {};
-      const requestId = String(params.id || params.requestId || "").trim();
+      const requestId = trimString(params.id || params.requestId || "", MAX_ID_LENGTH);
 
       if (!requestId) {
         return json(400, {
@@ -365,6 +492,13 @@ exports.handler = async (event) => {
         ? requests.map((request) => normalizeRequest(request))
         : [];
       const updated = existing.filter((request) => request.id !== requestId);
+
+      if (updated.length === existing.length) {
+        return json(404, {
+          ok: false,
+          error: "Solicitud no encontrada.",
+        });
+      }
 
       await writeJSON(store, REQUESTS_KEY, updated);
       await appendAudit(store, {

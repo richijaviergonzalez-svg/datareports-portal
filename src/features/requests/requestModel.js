@@ -17,6 +17,8 @@ export const REQUEST_PRIORITY_LABELS = {
 };
 
 export const REQUEST_STATUS_FLOW = ["new", "analysis", "progress", "resolved"];
+export const REQUEST_DETAIL_MAX_LENGTH = 2000;
+export const REQUEST_ADMIN_NOTE_MAX_LENGTH = 1200;
 
 export const REQUEST_STATUS_OPTIONS = [
   { value: "all", label: "Todos los estados" },
