@@ -5,5 +5,15 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('powerbi-client')) return 'powerbi';
+          if (id.includes('@azure/msal-browser')) return 'auth';
+          return 'vendor';
+        },
+      },
+    },
   },
 });

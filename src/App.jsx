@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import * as pbi from "powerbi-client";
 import {
   ALL_CATEGORIES,
   DEFAULT_REPORTS,
@@ -141,7 +140,31 @@ const Sparkline = ({ data, color, width = 80, height = 28 }) => {
 // ========================
 // POWER BI EMBED
 // ========================
-const powerbiService = new pbi.service.Service(pbi.factories.hpmFactory, pbi.factories.wpmpFactory, pbi.factories.routerFactory);
+let powerbiClientPromise = null;
+let loadedPowerbiService = null;
+
+function loadPowerBiClient() {
+  if (!powerbiClientPromise) {
+    powerbiClientPromise = import("powerbi-client").then((pbi) => {
+      loadedPowerbiService = new pbi.service.Service(
+        pbi.factories.hpmFactory,
+        pbi.factories.wpmpFactory,
+        pbi.factories.routerFactory
+      );
+
+      return {
+        pbi,
+        service: loadedPowerbiService,
+      };
+    });
+  }
+
+  return powerbiClientPromise;
+}
+
+function getLoadedPowerBiService() {
+  return loadedPowerbiService;
+}
 
 function PowerBIEmbed({ report, dark }) {
   const containerId = `pbi-container-${report.id}`;
@@ -174,6 +197,7 @@ function PowerBIEmbed({ report, dark }) {
         const container = document.getElementById(containerId);
         if (!container || !mounted) return;
 
+        const { pbi, service } = await loadPowerBiClient();
         const models = pbi.models;
         const embedConfig = {
           type: "report",
@@ -194,8 +218,8 @@ function PowerBIEmbed({ report, dark }) {
           },
         };
 
-        powerbiService.reset(container);
-        embeddedReport = powerbiService.embed(container, embedConfig);
+        service.reset(container);
+        embeddedReport = service.embed(container, embedConfig);
 
         embeddedReport.on("loaded", () => {
           if (!mounted) return;
@@ -254,7 +278,7 @@ function PowerBIEmbed({ report, dark }) {
       const container = document.getElementById(containerId);
       if (container) {
         try {
-          powerbiService.reset(container);
+          getLoadedPowerBiService()?.reset(container);
         } catch (e) {
           console.warn("Power BI reset failed:", e);
         }
@@ -2059,9 +2083,9 @@ function Dashboard({ user, onLogout }) {
     const isDraft = selectedReport.status === "draft";
     const lastView = recentViews.find(r => r.id === selectedReport.id);
     const fullscreenToggle = () => { const el = document.getElementById("report-embed-container"); if (el) { if (document.fullscreenElement) document.exitFullscreen(); else if (el.requestFullscreen) el.requestFullscreen(); else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen(); } };
-    const zoomReport = (level) => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); if (c) { try { const e = powerbiService.get(c); if (e) e.setZoom(level / 100); } catch(err) {} } };
-    const reloadReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); if (c) { try { const e = powerbiService.get(c); if (e) e.reload(); } catch(err) {} } };
-    const printReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); if (c) { try { const e = powerbiService.get(c); if (e) e.print(); } catch(err) {} } };
+    const zoomReport = (level) => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.setZoom(level / 100); } catch(err) {} } };
+    const reloadReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.reload(); } catch(err) {} } };
+    const printReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.print(); } catch(err) {} } };
 
     return (
       <div style={{ fontFamily: "'Outfit', system-ui", height: "100vh", minHeight: 0, overflow: "hidden", background: theme.bg, display: "flex", flexDirection: "column" }}>
