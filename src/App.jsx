@@ -15,12 +15,17 @@ import {
 } from "./features/reports/reportModel.js";
 import {
   REQUEST_PRIORITY_LABELS,
+  REQUEST_PRIORITY_OPTIONS,
   REQUEST_STATUS_LABELS,
+  REQUEST_STATUS_FLOW,
   REQUEST_STATUS_OPTIONS,
   REQUEST_TYPE_OPTIONS,
   createBiPortalRequest,
   filterRequests,
   getRequestStatusColor,
+  getRequestSla,
+  getRequestStats,
+  getRequestTimeline,
   getVisibleRequests,
   updateRequestStatusInList,
 } from "./features/requests/requestModel.js";
@@ -1230,6 +1235,7 @@ function Dashboard({ user, onLogout }) {
   const [requestStatusFilter, setRequestStatusFilter] = useState("all");
   const [requestTypeFilter, setRequestTypeFilter] = useState("all");
   const [selectedRequest, setSelectedRequest] = useState(null);
+  const [requestAdminNote, setRequestAdminNote] = useState("");
   const [requestSyncStatus, setRequestSyncStatus] = useState("local");
   const [requestSyncMessage, setRequestSyncMessage] = useState("Guardado local");
   const [reportSyncStatus, setReportSyncStatus] = useState("local");
@@ -1602,6 +1608,10 @@ function Dashboard({ user, onLogout }) {
     if (loaded && user?.email) fetchSharedRequests();
   }, [loaded, user?.email, fetchSharedRequests]);
 
+  useEffect(() => {
+    setRequestAdminNote(selectedRequest?.adminNote || "");
+  }, [selectedRequest?.id, selectedRequest?.adminNote]);
+
   const pushSharedRequest = async (request) => {
     try {
       const data = await createBiRequest({ getAccessToken, request });
@@ -1619,9 +1629,9 @@ function Dashboard({ user, onLogout }) {
     }
   };
 
-  const patchSharedRequestStatus = async (requestId, status) => {
+  const patchSharedRequestStatus = async (requestId, updates) => {
     try {
-      const data = await updateBiRequestStatus({ getAccessToken, requestId, status });
+      const data = await updateBiRequestStatus({ getAccessToken, requestId, ...updates });
       if (Array.isArray(data.requests)) {
         setRequests(data.requests);
         saveAll(reports, favorites, recentViews, notifications, data.requests);
@@ -1722,14 +1732,28 @@ function Dashboard({ user, onLogout }) {
     typeFilter: requestTypeFilter,
     query: searchQuery,
   });
+  const requestStats = getRequestStats(visibleRequests);
 
-  const updateRequestStatus = (requestId, status) => {
-    const updatedRequests = updateRequestStatusInList(requests, requestId, status);
+  const updateRequestWorkflow = (requestId, updates, toastMessage) => {
+    const updatedRequests = updateRequestStatusInList(requests, requestId, updates, user);
     setRequests(updatedRequests);
     if (selectedRequest?.id === requestId) setSelectedRequest(updatedRequests.find(req => req.id === requestId));
     saveAll(reports, favorites, recentViews, notifications, updatedRequests);
-    patchSharedRequestStatus(requestId, status);
-    showToast(`Solicitud marcada como ${requestStatusLabels[status] || status}`);
+    patchSharedRequestStatus(requestId, updates);
+    showToast(toastMessage);
+  };
+
+  const updateRequestStatus = (requestId, status) => {
+    updateRequestWorkflow(requestId, { status }, `Solicitud marcada como ${requestStatusLabels[status] || status}`);
+  };
+
+  const updateRequestPriority = (requestId, priority) => {
+    updateRequestWorkflow(requestId, { priority }, `Prioridad actualizada a ${requestPriorityLabels[priority] || priority}`);
+  };
+
+  const saveRequestAdminNote = () => {
+    if (!selectedRequest) return;
+    updateRequestWorkflow(selectedRequest.id, { adminNote: requestAdminNote }, "Nota administrativa guardada");
   };
 
   const sidebarWidth = sidebarCollapsed ? 68 : 260;
@@ -1761,10 +1785,10 @@ function Dashboard({ user, onLogout }) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 18 }} className="kpi-grid">
           {[
-            { label: "Solicitudes", value: visibleRequests.length, color: T.teal },
-            { label: "Nuevas", value: visibleRequests.filter(r => r.status === "new").length, color: "#F59E0B" },
-            { label: "En proceso", value: visibleRequests.filter(r => ["analysis", "progress"].includes(r.status)).length, color: "#3B82F6" },
-            { label: "Resueltas", value: visibleRequests.filter(r => r.status === "resolved").length, color: "#10B981" },
+            { label: "Solicitudes", value: requestStats.total, color: T.teal },
+            { label: "Nuevas", value: requestStats.new, color: "#F59E0B" },
+            { label: "En proceso", value: requestStats.inProgress, color: "#3B82F6" },
+            { label: "Fuera SLA", value: requestStats.breached, color: "#EF4444" },
           ].map((item, i) => (
             <div key={item.label} style={{ background: theme.bgCard, borderRadius: 16, border: `1px solid ${theme.border}`, padding: "16px 18px", animation: `scaleIn .3s ease-out ${.04 * i}s both` }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{item.value}</div>
@@ -1801,6 +1825,7 @@ function Dashboard({ user, onLogout }) {
               </div>
             ) : filteredRequests.map((req, i) => {
               const color = statusColor(req.status);
+              const sla = getRequestSla(req);
               return (
                 <button key={req.id} onClick={() => setSelectedRequest(req)} style={{ textAlign: "left", background: selectedRequest?.id === req.id ? (dark ? T.teal + "10" : T.tealBg) : theme.bgCard, border: `1px solid ${selectedRequest?.id === req.id ? T.teal + "55" : theme.border}`, borderRadius: 16, padding: "16px 18px", cursor: "pointer", transition: "all .2s", animation: `scaleIn .25s ease-out ${.03 * i}s both` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 10 }}>
@@ -1808,6 +1833,8 @@ function Dashboard({ user, onLogout }) {
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
                         <RequestBadge color={req.type === "issue" ? "#EF4444" : "#6366F1"}>{req.typeLabel}</RequestBadge>
                         <RequestBadge color={color}>{requestStatusLabels[req.status] || req.status}</RequestBadge>
+                        <RequestBadge color={sla.color}>{sla.label}</RequestBadge>
+                        <RequestBadge color="#F59E0B">{requestPriorityLabels[req.priority] || req.priority}</RequestBadge>
                       </div>
                       <div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>{req.reportName}</div>
                       <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 3 }}>{req.id} · {timeAgo(req.createdAt)}</div>
@@ -1818,6 +1845,10 @@ function Dashboard({ user, onLogout }) {
                     </div>
                   </div>
                   <p style={{ fontSize: 12, color: theme.textSecondary, lineHeight: 1.55, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{req.details}</p>
+                  <div style={{ marginTop: 12, height: 4, borderRadius: 999, background: dark ? "rgba(148,163,184,.18)" : "#E5E7EB", overflow: "hidden" }}>
+                    <div style={{ width: `${sla.progress}%`, height: "100%", background: sla.color, borderRadius: 999 }}/>
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 10, color: theme.textMuted }}>{sla.detail} · SLA objetivo {sla.targetHours}h</div>
                 </button>
               );
             })}
@@ -1837,6 +1868,31 @@ function Dashboard({ user, onLogout }) {
                   <RequestBadge color={selectedRequest.type === "issue" ? "#EF4444" : "#6366F1"}>{selectedRequest.typeLabel}</RequestBadge>
                   <RequestBadge color={statusColor(selectedRequest.status)}>{requestStatusLabels[selectedRequest.status] || selectedRequest.status}</RequestBadge>
                   <RequestBadge color="#F59E0B">Prioridad {requestPriorityLabels[selectedRequest.priority] || selectedRequest.priority}</RequestBadge>
+                  <RequestBadge color={getRequestSla(selectedRequest).color}>{getRequestSla(selectedRequest).label}</RequestBadge>
+                </div>
+                <div style={{ marginBottom: 18, padding: 14, borderRadius: 14, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: theme.textMuted }}>SLA operativo</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{getRequestSla(selectedRequest).detail}</div>
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: getRequestSla(selectedRequest).color }}>{getRequestSla(selectedRequest).targetHours}h objetivo</div>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 999, background: dark ? "rgba(148,163,184,.18)" : "#E5E7EB", overflow: "hidden", marginBottom: 14 }}>
+                    <div style={{ width: `${getRequestSla(selectedRequest).progress}%`, height: "100%", background: getRequestSla(selectedRequest).color, borderRadius: 999 }}/>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: `repeat(${REQUEST_STATUS_FLOW.length}, 1fr)`, gap: 6 }}>
+                    {REQUEST_STATUS_FLOW.map((status, index) => {
+                      const activeIndex = REQUEST_STATUS_FLOW.indexOf(selectedRequest.status);
+                      const isDone = selectedRequest.status === "rejected" ? status === "new" : index <= activeIndex;
+                      return (
+                        <div key={status} style={{ minWidth: 0 }}>
+                          <div style={{ height: 4, borderRadius: 999, background: isDone ? statusColor(status) : theme.border, marginBottom: 6 }}/>
+                          <div style={{ fontSize: 9, color: isDone ? theme.text : theme.textMuted, fontWeight: isDone ? 700 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{requestStatusLabels[status]}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
                   {[{ label: "Reporte", value: selectedRequest.reportName }, { label: "Categoría", value: selectedRequest.reportCategory }, { label: "Usuario", value: selectedRequest.userName }, { label: "Correo", value: selectedRequest.userEmail }].map((item) => (
@@ -1854,13 +1910,42 @@ function Dashboard({ user, onLogout }) {
                   Creado: {new Date(selectedRequest.createdAt).toLocaleString("es-PY")}<br/>
                   Actualizado: {new Date(selectedRequest.updatedAt).toLocaleString("es-PY")}
                 </div>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 10, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .6, marginBottom: 10 }}>Timeline</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {getRequestTimeline(selectedRequest).slice(0, 5).map((entry) => (
+                      <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "12px 1fr", gap: 10 }}>
+                        <div style={{ width: 9, height: 9, borderRadius: 999, background: statusColor(entry.status), marginTop: 4, boxShadow: `0 0 0 4px ${statusColor(entry.status)}18` }}/>
+                        <div>
+                          <div style={{ fontSize: 12, color: theme.text, fontWeight: 600 }}>{entry.label || requestStatusLabels[entry.status] || "Actualización"}</div>
+                          <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>{entry.actorName || "Equipo BI"} · {new Date(entry.createdAt).toLocaleString("es-PY")}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 {isAdmin(user.email) && (
-                  <div>
-                    <div style={{ fontSize: 10, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .6, marginBottom: 8 }}>Cambiar estado</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                      {Object.entries(requestStatusLabels).map(([key, label]) => (
-                        <button key={key} onClick={() => updateRequestStatus(selectedRequest.id, key)} style={{ padding: "9px 10px", borderRadius: 10, border: `1px solid ${selectedRequest.status === key ? statusColor(key) : theme.border}`, background: selectedRequest.status === key ? (dark ? statusColor(key) + "18" : statusColor(key) + "12") : theme.bgSurface, color: selectedRequest.status === key ? statusColor(key) : theme.textSecondary, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>{label}</button>
-                      ))}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .6, marginBottom: 8 }}>Cambiar estado</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        {Object.entries(requestStatusLabels).map(([key, label]) => (
+                          <button key={key} onClick={() => updateRequestStatus(selectedRequest.id, key)} style={{ padding: "9px 10px", borderRadius: 10, border: `1px solid ${selectedRequest.status === key ? statusColor(key) : theme.border}`, background: selectedRequest.status === key ? (dark ? statusColor(key) + "18" : statusColor(key) + "12") : theme.bgSurface, color: selectedRequest.status === key ? statusColor(key) : theme.textSecondary, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>{label}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .6, marginBottom: 8 }}>Prioridad</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                        {REQUEST_PRIORITY_OPTIONS.map((option) => (
+                          <button key={option.value} onClick={() => updateRequestPriority(selectedRequest.id, option.value)} style={{ padding: "9px 8px", borderRadius: 10, border: `1px solid ${selectedRequest.priority === option.value ? "#F59E0B" : theme.border}`, background: selectedRequest.priority === option.value ? (dark ? "#F59E0B18" : "#FFFBEB") : theme.bgSurface, color: selectedRequest.priority === option.value ? "#F59E0B" : theme.textSecondary, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>{option.label}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .6, marginBottom: 8 }}>Nota administrativa</div>
+                      <textarea value={requestAdminNote} onChange={e => setRequestAdminNote(e.target.value)} placeholder="Agregar criterio, responsable, bloqueo o próxima acción..." style={{ width: "100%", minHeight: 82, resize: "vertical", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, padding: 12, outline: "none", fontSize: 12, lineHeight: 1.55, fontFamily: "'Outfit', system-ui" }} />
+                      <button onClick={saveRequestAdminNote} style={{ marginTop: 8, width: "100%", padding: "10px 12px", borderRadius: 11, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Guardar nota</button>
                     </div>
                   </div>
                 )}

@@ -11,6 +11,21 @@ const headers = {
   Vary: "Authorization",
 };
 
+const REQUEST_STATUS_LABELS = {
+  new: "Nuevo",
+  analysis: "En análisis",
+  progress: "En proceso",
+  resolved: "Resuelto",
+  rejected: "Rechazado",
+};
+
+const REQUEST_PRIORITY_LABELS = {
+  baja: "Baja",
+  media: "Media",
+  alta: "Alta",
+  critica: "Crítica",
+};
+
 function json(statusCode, body) {
   return {
     statusCode,
@@ -40,13 +55,42 @@ function normalizeRequestType(type) {
 }
 
 function normalizeRequestStatus(status) {
-  const allowed = ["new", "in-review", "approved", "rejected", "done"];
-  return allowed.includes(status) ? status : "new";
+  const aliases = {
+    "in-review": "analysis",
+    approved: "progress",
+    done: "resolved",
+  };
+  const normalized = aliases[status] || status;
+  const allowed = ["new", "analysis", "progress", "resolved", "rejected"];
+  return allowed.includes(normalized) ? normalized : "new";
 }
 
 function normalizePriority(priority) {
-  const allowed = ["low", "medium", "high", "critical"];
-  return allowed.includes(priority) ? priority : "medium";
+  const aliases = {
+    low: "baja",
+    medium: "media",
+    high: "alta",
+    critical: "critica",
+  };
+  const normalized = aliases[priority] || priority;
+  const allowed = ["baja", "media", "alta", "critica"];
+  return allowed.includes(normalized) ? normalized : "media";
+}
+
+function normalizeHistory(history = []) {
+  return (Array.isArray(history) ? history : [])
+    .map((entry) => ({
+      id: String(entry.id || `HIS-${Date.now()}`).trim(),
+      type: String(entry.type || "event").trim(),
+      status: normalizeRequestStatus(entry.status),
+      priority: normalizePriority(entry.priority),
+      label: String(entry.label || "").trim(),
+      actorName: String(entry.actorName || "Equipo BI").trim(),
+      actorEmail: String(entry.actorEmail || "").trim().toLowerCase(),
+      createdAt: entry.createdAt || new Date().toISOString(),
+    }))
+    .filter((entry) => entry.createdAt)
+    .slice(0, 40);
 }
 
 function normalizeRequest(request = {}, auth = {}) {
@@ -69,6 +113,7 @@ function normalizeRequest(request = {}, auth = {}) {
     status: normalizeRequestStatus(request.status),
     priority: normalizePriority(request.priority),
     adminNote: String(request.adminNote || "").trim(),
+    history: normalizeHistory(request.history),
     createdAt: request.createdAt || now,
     updatedAt: request.updatedAt || now,
   };
@@ -172,6 +217,19 @@ exports.handler = async (event) => {
         auth
       );
 
+      incoming.history = [
+        {
+          id: `HIS-${Date.now()}`,
+          type: "created",
+          status: "new",
+          priority: incoming.priority,
+          label: incoming.type === "issue" ? "Problema registrado" : "Solicitud creada",
+          actorName: incoming.userName,
+          actorEmail: incoming.userEmail,
+          createdAt: incoming.createdAt,
+        },
+      ].slice(0, 40);
+
       const errors = validateRequest(incoming);
       if (errors.length) {
         return json(400, {
@@ -231,14 +289,37 @@ exports.handler = async (event) => {
       const updated = existing.map((request) => {
         if (request.id !== requestId) return request;
         changed = true;
+        const nextStatus = normalizeRequestStatus(body.status || request.status);
+        const nextPriority = normalizePriority(body.priority || request.priority);
+        const nextAdminNote =
+          typeof body.adminNote === "string" ? body.adminNote.trim() : request.adminNote;
+        const changedStatus = nextStatus !== request.status;
+        const changedPriority = nextPriority !== request.priority;
+        const changedNote = nextAdminNote !== request.adminNote;
+        const historyEntry = {
+          id: `HIS-${Date.now()}`,
+          type: changedStatus ? "status" : changedPriority ? "priority" : "note",
+          status: nextStatus,
+          priority: nextPriority,
+          label: changedStatus
+            ? `Estado cambiado a ${REQUEST_STATUS_LABELS[nextStatus] || nextStatus}`
+            : changedPriority
+              ? `Prioridad cambiada a ${REQUEST_PRIORITY_LABELS[nextPriority] || nextPriority}`
+              : "Nota administrativa actualizada",
+          actorName: auth.userName || "Equipo BI",
+          actorEmail: auth.userEmail,
+          createdAt: new Date().toISOString(),
+        };
 
         return normalizeRequest({
           ...request,
-          status: body.status || request.status,
-          priority: body.priority || request.priority,
-          adminNote:
-            typeof body.adminNote === "string" ? body.adminNote : request.adminNote,
-          updatedAt: new Date().toISOString(),
+          status: nextStatus,
+          priority: nextPriority,
+          adminNote: nextAdminNote,
+          history: changedStatus || changedPriority || changedNote
+            ? [historyEntry, ...request.history]
+            : request.history,
+          updatedAt: historyEntry.createdAt,
         });
       });
 
@@ -254,6 +335,8 @@ exports.handler = async (event) => {
         action: "update_request",
         requestId,
         status: body.status || "",
+        priority: body.priority || "",
+        hasAdminNote: typeof body.adminNote === "string",
         userEmail: auth.userEmail,
       });
 
