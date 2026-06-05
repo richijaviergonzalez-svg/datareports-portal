@@ -50,6 +50,7 @@ const SLA_TARGET_HOURS = {
 };
 
 const CLOSED_STATUSES = ["resolved", "rejected"];
+const OPEN_STATUSES = ["new", "analysis", "progress"];
 
 export function createBiPortalRequest({
   actionType,
@@ -278,5 +279,79 @@ export function getRequestStats(requests = []) {
     inProgress: list.filter((request) => ["analysis", "progress"].includes(request.status)).length,
     breached: list.filter((request) => getRequestSla(request).isBreached).length,
     resolved: list.filter((request) => request.status === "resolved").length,
+  };
+}
+
+function hoursBetween(start, end) {
+  return Math.max(0, (new Date(end).getTime() - new Date(start).getTime()) / 36e5);
+}
+
+function groupCount(list, getKey) {
+  return list.reduce((acc, item) => {
+    const key = getKey(item) || "Sin clasificar";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function rankCounts(counts) {
+  return Object.entries(counts)
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+}
+
+export function getBiOpsInsights(requests = [], reports = [], now = new Date()) {
+  const list = Array.isArray(requests) ? requests : [];
+  const reportList = Array.isArray(reports) ? reports : [];
+  const openRequests = list.filter((request) => OPEN_STATUSES.includes(request.status));
+  const closedRequests = list.filter((request) => CLOSED_STATUSES.includes(request.status));
+  const resolvedRequests = list.filter((request) => request.status === "resolved" && request.createdAt && request.updatedAt);
+  const slaSignals = openRequests.map((request) => ({ request, sla: getRequestSla(request, now) }));
+  const breached = slaSignals.filter((item) => item.sla.isBreached);
+  const atRisk = slaSignals.filter((item) => item.sla.label === "En riesgo");
+  const avgResolutionHours = resolvedRequests.length
+    ? Math.round(resolvedRequests.reduce((sum, request) => sum + hoursBetween(request.createdAt, request.updatedAt), 0) / resolvedRequests.length)
+    : 0;
+  const reportRequestCounts = groupCount(list, (request) => request.reportName);
+  const categoryCounts = groupCount(list, (request) => request.reportCategory);
+  const statusCounts = groupCount(list, (request) => REQUEST_STATUS_LABELS[request.status] || request.status);
+  const priorityCounts = groupCount(openRequests, (request) => REQUEST_PRIORITY_LABELS[request.priority] || request.priority);
+  const activeReportIds = new Set(reportList.filter((report) => report.status === "live").map((report) => report.id));
+  const reportsWithIncidents = new Set(list.filter((request) => request.type === "issue").map((request) => request.reportId));
+  const affectedActiveReports = [...reportsWithIncidents].filter((reportId) => activeReportIds.has(reportId)).length;
+  const oldestOpen = [...openRequests].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0] || null;
+  const newestRequest = [...list].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+  const topSlaRisk = slaSignals
+    .sort((a, b) => {
+      if (a.sla.isBreached !== b.sla.isBreached) return a.sla.isBreached ? -1 : 1;
+      return b.sla.progress - a.sla.progress;
+    })
+    .slice(0, 5);
+
+  const opsScore = Math.max(
+    0,
+    100
+      - breached.length * 18
+      - atRisk.length * 8
+      - openRequests.filter((request) => request.priority === "critica").length * 10
+      - Math.max(0, openRequests.length - 10) * 2
+  );
+
+  return {
+    total: list.length,
+    open: openRequests.length,
+    closed: closedRequests.length,
+    breached: breached.length,
+    atRisk: atRisk.length,
+    avgResolutionHours,
+    opsScore,
+    oldestOpen,
+    newestRequest,
+    affectedActiveReports,
+    topReports: rankCounts(reportRequestCounts).slice(0, 5),
+    topCategories: rankCounts(categoryCounts).slice(0, 5),
+    statusDistribution: rankCounts(statusCounts),
+    priorityDistribution: rankCounts(priorityCounts),
+    topSlaRisk,
   };
 }

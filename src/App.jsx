@@ -23,6 +23,7 @@ import {
   REQUEST_TYPE_OPTIONS,
   createBiPortalRequest,
   filterRequests,
+  getBiOpsInsights,
   getRequestStatusColor,
   getRequestSla,
   getRequestStats,
@@ -884,7 +885,10 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
     { id: "favorites", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>, label: "Favoritos", count: favorites.length },
     { id: "recent", icon: <svg width="18" height="18" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>, label: "Recientes" },
     { id: "requests", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 6h6M5 8.5h4M5 11h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>, label: "Solicitudes BI", count: requests.filter(r => isUserAdmin || r.userEmail === user?.email).length },
-    ...(isUserAdmin ? [{ id: "metrics", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M2 14l4-5 3 2 5-7" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Métricas" }] : []),
+    ...(isUserAdmin ? [
+      { id: "biops", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 10l2-3 2 1.8 2-3.3" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "BI Ops" },
+      { id: "metrics", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M2 14l4-5 3 2 5-7" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Métricas" },
+    ] : []),
   ];
 
   return (
@@ -1076,6 +1080,142 @@ function HealthBadge({ report, dark }) {
     <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 6, background: s.bg, fontSize: 9, fontWeight: 500, color: s.color }}>
       <div style={{ width: 5, height: 5, borderRadius: 3, background: s.color, animation: report.status === "live" ? "breathe 3s ease-in-out infinite" : "none" }}/>
       {s.label}
+    </div>
+  );
+}
+
+// ========================
+// BI OPS PANEL (Admin only)
+// ========================
+function BiOpsPanel({ dark, reports, requests, onOpenRequests }) {
+  const theme = dark ? darkTheme : lightTheme;
+  const ops = getBiOpsInsights(requests, reports);
+  const scoreColor = ops.opsScore >= 80 ? "#10B981" : ops.opsScore >= 60 ? "#F59E0B" : "#EF4444";
+  const maxReportDemand = Math.max(...ops.topReports.map((item) => item.value), 1);
+  const maxCategoryDemand = Math.max(...ops.topCategories.map((item) => item.value), 1);
+
+  const OpsKpi = ({ label, value, detail, color }) => (
+    <div style={{ background: theme.bgCard, borderRadius: 16, border: `1px solid ${theme.border}`, padding: "16px 18px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: theme.text }}>{value}</div>
+          <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 3 }}>{label}</div>
+        </div>
+        <div style={{ width: 30, height: 30, borderRadius: 10, background: color + "14", color, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <svg width="15" height="15" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4" fill="none"/><path d="M8 4.8v3.4l2.2 1.4" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+        </div>
+      </div>
+      <div style={{ height: 3, borderRadius: 999, background: color, opacity: .85, marginTop: 13 }}/>
+      {detail && <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 8 }}>{detail}</div>}
+    </div>
+  );
+
+  const DemandBar = ({ item, max, color }) => (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 42px", gap: 10, alignItems: "center", marginBottom: 11 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: theme.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</div>
+        <div style={{ height: 5, borderRadius: 999, background: theme.bgSurface, marginTop: 6, overflow: "hidden" }}>
+          <div style={{ width: `${Math.max(8, (item.value / max) * 100)}%`, height: "100%", borderRadius: 999, background: color }}/>
+        </div>
+      </div>
+      <div style={{ textAlign: "right", fontSize: 13, color: theme.text, fontWeight: 700 }}>{item.value}</div>
+    </div>
+  );
+
+  const EmptyState = ({ children }) => (
+    <div style={{ padding: 22, borderRadius: 14, border: `1px dashed ${theme.border}`, color: theme.textMuted, fontSize: 12, textAlign: "center" }}>{children}</div>
+  );
+
+  return (
+    <div style={{ animation: "fadeUp .35s ease-out" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: 18, fontWeight: 600, color: theme.text, marginBottom: 4 }}>BI Ops Command Center</h2>
+          <p style={{ fontSize: 12, color: theme.textMuted }}>Gobierno operativo de solicitudes, SLA, demanda y priorización del roadmap BI.</p>
+        </div>
+        <button onClick={onOpenRequests} style={{ padding: "10px 14px", borderRadius: 12, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Abrir Solicitudes BI</button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, .9fr) 1.6fr", gap: 16, marginBottom: 16 }} className="metrics-grid">
+        <div style={{ background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, padding: 22 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, marginBottom: 18 }}>
+            <div>
+              <div style={{ fontSize: 11, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .7 }}>Health operativo</div>
+              <div style={{ fontSize: 42, lineHeight: 1, fontWeight: 800, color: scoreColor, marginTop: 7 }}>{ops.opsScore}</div>
+            </div>
+            <div style={{ width: 78, height: 78, borderRadius: 24, background: scoreColor + "14", color: scoreColor, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="34" height="34" viewBox="0 0 16 16"><path d="M8 1.5l5.5 2v4.2c0 3-2.1 5.6-5.5 6.8-3.4-1.2-5.5-3.8-5.5-6.8V3.5l5.5-2z" stroke="currentColor" strokeWidth="1.2" fill="none"/><path d="M5.2 8.1l1.8 1.8 3.8-4" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </div>
+          </div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {[
+              { label: "Solicitudes abiertas", value: ops.open, color: T.teal },
+              { label: "Fuera de SLA", value: ops.breached, color: "#EF4444" },
+              { label: "En riesgo", value: ops.atRisk, color: "#F59E0B" },
+            ].map((item) => (
+              <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 10px", borderRadius: 10, background: theme.bgSurface }}>
+                <span style={{ fontSize: 12, color: theme.textMuted }}>{item.label}</span>
+                <span style={{ fontSize: 13, color: item.color, fontWeight: 800 }}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }} className="kpi-grid">
+          <OpsKpi label="Backlog abierto" value={ops.open} detail={`${ops.closed} cerradas`} color={T.teal}/>
+          <OpsKpi label="SLA vencidos" value={ops.breached} detail={`${ops.atRisk} en riesgo`} color="#EF4444"/>
+          <OpsKpi label="Prom. resolución" value={ops.avgResolutionHours ? `${ops.avgResolutionHours}h` : "N/D"} detail="Solicitudes resueltas" color="#6366F1"/>
+          <OpsKpi label="Reportes impactados" value={ops.affectedActiveReports} detail="Activos con incidencias" color="#F59E0B"/>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }} className="metrics-grid">
+        <div style={{ background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, padding: 20 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 16 }}>Reportes con más demanda</h3>
+          {ops.topReports.length ? ops.topReports.map((item) => <DemandBar key={item.label} item={item} max={maxReportDemand} color={T.teal}/>) : <EmptyState>Sin solicitudes registradas todavía.</EmptyState>}
+        </div>
+        <div style={{ background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, padding: 20 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 16 }}>Demanda por área</h3>
+          {ops.topCategories.length ? ops.topCategories.map((item) => <DemandBar key={item.label} item={item} max={maxCategoryDemand} color="#6366F1"/>) : <EmptyState>Sin demanda por categoría todavía.</EmptyState>}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1.15fr .85fr", gap: 16 }} className="metrics-grid">
+        <div style={{ background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, padding: 20 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 16 }}>Riesgo SLA priorizado</h3>
+          {ops.topSlaRisk.length ? ops.topSlaRisk.map(({ request, sla }, i) => (
+            <div key={request.id} style={{ display: "grid", gridTemplateColumns: "28px minmax(0, 1fr) 98px", gap: 12, alignItems: "center", padding: "11px 0", borderBottom: i < ops.topSlaRisk.length - 1 ? `1px solid ${theme.border}` : "none" }}>
+              <div style={{ width: 26, height: 26, borderRadius: 9, background: sla.color + "14", color: sla.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>{i + 1}</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{request.reportName}</div>
+                <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{request.userName} · {REQUEST_PRIORITY_LABELS[request.priority] || request.priority}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, color: sla.color, fontWeight: 800 }}>{sla.label}</div>
+                <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>{sla.detail}</div>
+              </div>
+            </div>
+          )) : <EmptyState>No hay solicitudes abiertas con riesgo.</EmptyState>}
+        </div>
+
+        <div style={{ background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, padding: 20 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 16 }}>Distribución abierta</h3>
+          <div style={{ display: "grid", gap: 10 }}>
+            {ops.priorityDistribution.length ? ops.priorityDistribution.map((item) => (
+              <div key={item.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 12, background: theme.bgSurface }}>
+                <span style={{ fontSize: 12, color: theme.text }}>{item.label}</span>
+                <span style={{ fontSize: 14, color: T.teal, fontWeight: 800 }}>{item.value}</span>
+              </div>
+            )) : <EmptyState>No hay backlog abierto.</EmptyState>}
+          </div>
+          <div style={{ marginTop: 16, padding: 14, borderRadius: 14, background: ops.breached > 0 ? (dark ? "#EF444410" : "#FEF2F2") : (dark ? "#10B98112" : "#ECFDF5"), border: `1px solid ${ops.breached > 0 ? (dark ? "#EF444433" : "#FECACA") : (dark ? "#10B98133" : "#A7F3D0")}` }}>
+            <div style={{ fontSize: 12, color: theme.text, fontWeight: 700 }}>{ops.breached > 0 ? "Atención prioritaria" : "Operación bajo control"}</div>
+            <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 4, lineHeight: 1.5 }}>
+              {ops.breached > 0 ? "Revisá los casos fuera de SLA antes de tomar nuevas mejoras." : "No hay vencimientos activos; buen momento para priorizar mejoras de mayor impacto."}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2258,7 +2398,7 @@ function Dashboard({ user, onLogout }) {
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
             <h2 style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>
-              {activeView === "dashboard" ? "Dashboard" : activeView === "favorites" ? "Favoritos" : activeView === "recent" ? "Recientes" : activeView === "requests" ? "Solicitudes BI" : "Métricas"}
+              {activeView === "dashboard" ? "Dashboard" : activeView === "favorites" ? "Favoritos" : activeView === "recent" ? "Recientes" : activeView === "requests" ? "Solicitudes BI" : activeView === "biops" ? "BI Ops" : "Métricas"}
             </h2>
             {activeCategory !== "Todos" && activeView === "dashboard" && (
               <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "15" : T.tealBg, padding: "3px 10px", borderRadius: 8, fontWeight: 500 }}>{activeCategory}</span>
@@ -2395,6 +2535,9 @@ function Dashboard({ user, onLogout }) {
 
           {/* Metrics Panel - admin only */}
           {activeView === "metrics" && isAdmin(user.email) && <MetricsPanel dark={dark} reports={reports} recentViews={recentViews} favorites={favorites}/>}
+
+          {/* BI Ops Panel - admin only */}
+          {activeView === "biops" && isAdmin(user.email) && <BiOpsPanel dark={dark} reports={reports} requests={requests} onOpenRequests={() => navigateToView("requests")}/>}
 
           {/* Requests module */}
           {activeView === "requests" && renderRequestsPanel()}
