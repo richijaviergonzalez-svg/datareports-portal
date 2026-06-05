@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { PublicClientApplication } from "@azure/msal-browser";
 import * as pbi from "powerbi-client";
+import {
+  buildUserFromAccount,
+  getAccessToken,
+  getCurrentUser,
+  isAdmin,
+  msalLogin,
+} from "./lib/auth.js";
 import {
   createBiRequest,
   fetchBiRequests,
@@ -8,6 +14,7 @@ import {
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
+import { loadPortalState, savePortalState } from "./lib/storage.js";
 
 /*
 ╔══════════════════════════════════════════════════════════════╗
@@ -16,40 +23,6 @@ import {
 ║  Persistencia via window.storage API                         ║
 ╚══════════════════════════════════════════════════════════════╝
 */
-
-const getRedirectUri = () => {
-  const currentOrigin = typeof window !== "undefined" ? window.location.origin : "";
-  const configuredRedirectUri = import.meta.env.VITE_REDIRECT_URI || currentOrigin;
-  const isPreviewOrLocal =
-    currentOrigin.includes("deploy-preview-") ||
-    currentOrigin.includes("localhost") ||
-    currentOrigin.includes("127.0.0.1");
-
-  return isPreviewOrLocal ? currentOrigin : configuredRedirectUri;
-};
-
-const CONFIG = {
-  tenantId: import.meta.env.VITE_TENANT_ID || "0cd4c62a-f014-46ba-821f-a1361b7fcb06",
-  clientId: import.meta.env.VITE_CLIENT_ID || "e2992f66-278a-4c4d-a65b-a84a3d0b4812",
-  authority: `https://login.microsoftonline.com/${import.meta.env.VITE_TENANT_ID || "0cd4c62a-f014-46ba-821f-a1361b7fcb06"}`,
-  redirectUri: getRedirectUri(),
-  scopes: [
-    "https://analysis.windows.net/powerbi/api/Report.Read.All",
-    "https://analysis.windows.net/powerbi/api/Workspace.Read.All",
-  ],
-};
-
-// Emails de administradores que pueden acceder al panel admin
-const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || "richi.gonzalez@pilarpy.onmicrosoft.com").split(",").map(e => e.trim().toLowerCase());
-
-const isAdmin = (email) => ADMIN_EMAILS.includes((email || "").toLowerCase());
-
-const buildUserFromAccount = (account) => ({
-  name: account.name || account.username,
-  email: account.username,
-  role: isAdmin(account.username) ? "Administrador BI" : "Usuario BI",
-  avatar: (account.name || "U").split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase(),
-});
 
 const DEFAULT_REPORTS = [
   { id: "d48d43aa-2b9a-4b72-8607-b3ed143d130a", groupId: "a4ea35c6-d88d-4537-9599-29515db688fa", name: "Comparativo de Ventas por Familia", category: "Abastecimiento", icon: "boxes", status: "live", description: "Análisis comparativo de ventas desglosado por familia de productos con tendencias y variaciones." },
@@ -232,54 +205,6 @@ const getVisibilityLabel = (report) => {
   return "Todos";
 };
 
-
-// ========================
-// MSAL AUTHENTICATION
-// ========================
-
-let msalInstance = null;
-
-async function getMsalInstance() {
-  if (!msalInstance) {
-    msalInstance = new PublicClientApplication({
-      auth: { clientId: CONFIG.clientId, authority: CONFIG.authority, redirectUri: CONFIG.redirectUri, navigateToLoginRequestUrl: false },
-      cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false },
-    });
-    await msalInstance.initialize();
-  }
-  return msalInstance;
-}
-
-async function msalLogin() {
-  const instance = await getMsalInstance();
-  const redirectResponse = await instance.handleRedirectPromise().catch(() => null);
-  const account = redirectResponse?.account || instance.getAllAccounts()[0];
-
-  if (account) {
-    instance.setActiveAccount(account);
-    return account;
-  }
-
-  await instance.loginRedirect({ scopes: CONFIG.scopes });
-  return null;
-}
-
-async function getAccessToken() {
-  const instance = await getMsalInstance();
-  const accounts = [instance.getActiveAccount(), ...instance.getAllAccounts()].filter(Boolean);
-  if (accounts.length === 0) throw new Error("Sesión expirada. Por favor, iniciá sesión nuevamente.");
-  try {
-    const response = await instance.acquireTokenSilent({ scopes: CONFIG.scopes, account: accounts[0] });
-    return response.accessToken;
-  } catch (e) {
-    try {
-      const response = await instance.acquireTokenPopup({ scopes: CONFIG.scopes });
-      return response.accessToken;
-    } catch (popupError) {
-      throw new Error("No se pudo renovar la sesión. Por favor, cerrá sesión y volvé a iniciar.");
-    }
-  }
-}
 
 // ========================
 // SPARKLINE COMPONENT
@@ -1506,20 +1431,12 @@ function Dashboard({ user, onLogout }) {
     }
   }, [pushUiState]);
 
-  // Load from localStorage
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("datareports-config");
-      if (stored) {
-        const data = JSON.parse(stored);
-        // Importante: los reportes ya son catálogo centralizado en Netlify Blobs.
-        // No cargamos data.reports desde localStorage para evitar catálogos viejos por usuario.
-        if (data.favorites) setFavorites(data.favorites);
-        if (data.recentViews) setRecentViews(data.recentViews);
-        if (data.notifications) setNotifications(data.notifications);
-        if (data.requests) setRequests(data.requests);
-      }
-    } catch (e) {}
+    const savedState = loadPortalState();
+    if (savedState.favorites) setFavorites(savedState.favorites);
+    if (savedState.recentViews) setRecentViews(savedState.recentViews);
+    if (savedState.notifications) setNotifications(savedState.notifications);
+    if (savedState.requests) setRequests(savedState.requests);
     setLoaded(true);
   }, []);
 
@@ -1543,15 +1460,13 @@ function Dashboard({ user, onLogout }) {
   }, [applyUiState]);
 
   const saveAll = useCallback((r, f, rv, n, req) => {
-
     try {
-      localStorage.setItem("datareports-config", JSON.stringify({
-        // Los reportes NO se guardan en localStorage. El catálogo oficial vive en Netlify Blobs.
+      savePortalState({
         favorites: f,
         recentViews: rv,
         notifications: n || [],
         requests: req || [],
-      }));
+      });
     } catch (e) {}
   }, []);
 
@@ -2942,14 +2857,8 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const instance = await getMsalInstance();
-        const redirectResponse = await instance.handleRedirectPromise().catch(() => null);
-        const accounts = [redirectResponse?.account, instance.getActiveAccount(), ...instance.getAllAccounts()].filter(Boolean);
-        if (accounts.length > 0) {
-          const account = accounts[0];
-          instance.setActiveAccount(account);
-          setUser(buildUserFromAccount(account));
-        }
+        const currentUser = await getCurrentUser();
+        if (currentUser) setUser(currentUser);
       } catch (e) {}
       setInitializing(false);
     })();
