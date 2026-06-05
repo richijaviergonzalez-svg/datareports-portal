@@ -4,7 +4,6 @@ import {
   ALL_CATEGORIES,
   DEFAULT_REPORTS,
   ICON_OPTIONS,
-  buildActionSummary,
   canUserViewReport,
   getReportDescription,
   getReportPurpose,
@@ -14,6 +13,17 @@ import {
   normalizeReports,
   parseUrl,
 } from "./features/reports/reportModel.js";
+import {
+  REQUEST_PRIORITY_LABELS,
+  REQUEST_STATUS_LABELS,
+  REQUEST_STATUS_OPTIONS,
+  REQUEST_TYPE_OPTIONS,
+  createBiPortalRequest,
+  filterRequests,
+  getRequestStatusColor,
+  getVisibleRequests,
+  updateRequestStatusInList,
+} from "./features/requests/requestModel.js";
 import {
   buildUserFromAccount,
   getAccessToken,
@@ -1634,36 +1644,13 @@ function Dashboard({ user, onLogout }) {
 
   const submitActionModal = async () => {
     if (!actionModal?.report) return;
-    const now = new Date().toISOString();
     const cleanDetails = actionDetails.trim();
-    const requestId = `REQ-${Date.now()}`;
-    const newRequest = {
-      id: requestId,
-      type: actionModal.type === "issue" ? "issue" : "change",
-      typeLabel: actionModal.type === "issue" ? "Problema" : "Cambio",
-      title: actionModal.type === "issue" ? "Problema reportado" : "Solicitud de cambio",
-      reportId: actionModal.report.id,
-      reportName: actionModal.report.name,
-      reportCategory: actionModal.report.category,
-      details: cleanDetails || "Sin observaciones adicionales.",
-      userName: user?.name || "Usuario",
-      userEmail: user?.email || "Sin correo",
-      status: "new",
-      priority: actionModal.type === "issue" ? "media" : "baja",
-      createdAt: now,
-      updatedAt: now,
-      adminNote: "",
-    };
-    const message = buildActionSummary(actionModal.type, actionModal.report, cleanDetails);
-    const newNotif = {
-      id: Date.now() + Math.random(),
-      type: actionModal.type === "issue" ? "issue" : "update",
-      message,
-      time: now,
-      reportId: actionModal.report.id,
-      requestId,
-      read: false,
-    };
+    const { request: newRequest, notification: newNotif } = createBiPortalRequest({
+      actionType: actionModal.type,
+      report: actionModal.report,
+      details: cleanDetails,
+      user,
+    });
     const updatedNotifs = [newNotif, ...notifications].slice(0, 30);
     const updatedRequests = [newRequest, ...requests].slice(0, 100);
     setNotifications(updatedNotifs);
@@ -1727,31 +1714,17 @@ function Dashboard({ user, onLogout }) {
     : activeView === "recent" ? recentViews.filter(r => userVisibleReports.some(rr => rr.id === r.id))
     : filtered;
 
-  const requestStatusLabels = {
-    new: "Nuevo",
-    analysis: "En análisis",
-    progress: "En proceso",
-    resolved: "Resuelto",
-    rejected: "Rechazado",
-  };
-
-  const requestPriorityLabels = {
-    baja: "Baja",
-    media: "Media",
-    alta: "Alta",
-  };
-
-  const visibleRequests = (isAdmin(user.email) ? requests : requests.filter(r => r.userEmail === user.email));
-  const filteredRequests = visibleRequests.filter(req => {
-    const matchStatus = requestStatusFilter === "all" || req.status === requestStatusFilter;
-    const matchType = requestTypeFilter === "all" || req.type === requestTypeFilter;
-    const q = searchQuery.toLowerCase();
-    const matchSearch = !q || [req.id, req.reportName, req.userName, req.userEmail, req.details, req.typeLabel].some(v => (v || "").toLowerCase().includes(q));
-    return matchStatus && matchType && matchSearch;
+  const requestStatusLabels = REQUEST_STATUS_LABELS;
+  const requestPriorityLabels = REQUEST_PRIORITY_LABELS;
+  const visibleRequests = getVisibleRequests(requests, user);
+  const filteredRequests = filterRequests(visibleRequests, {
+    statusFilter: requestStatusFilter,
+    typeFilter: requestTypeFilter,
+    query: searchQuery,
   });
 
   const updateRequestStatus = (requestId, status) => {
-    const updatedRequests = requests.map(req => req.id === requestId ? { ...req, status, updatedAt: new Date().toISOString() } : req);
+    const updatedRequests = updateRequestStatusInList(requests, requestId, status);
     setRequests(updatedRequests);
     if (selectedRequest?.id === requestId) setSelectedRequest(updatedRequests.find(req => req.id === requestId));
     saveAll(reports, favorites, recentViews, notifications, updatedRequests);
@@ -1768,13 +1741,7 @@ function Dashboard({ user, onLogout }) {
   );
 
   const renderRequestsPanel = () => {
-    const statusColor = (status) => {
-      if (status === "resolved") return "#10B981";
-      if (status === "rejected") return "#EF4444";
-      if (status === "progress") return "#3B82F6";
-      if (status === "analysis") return "#F59E0B";
-      return T.teal;
-    };
+    const statusColor = (status) => getRequestStatusColor(status, T.teal);
 
     const RequestBadge = ({ children, color }) => (
       <span style={{ fontSize: 10, fontWeight: 600, color, background: dark ? color + "16" : color + "14", padding: "4px 10px", borderRadius: 999, whiteSpace: "nowrap" }}>{children}</span>
@@ -1813,17 +1780,14 @@ function Dashboard({ user, onLogout }) {
             <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Buscar por reporte, usuario o detalle..." style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: theme.text, fontSize: 13, fontFamily: "'Outfit', system-ui" }}/>
           </div>
           <select value={requestStatusFilter} onChange={e => setRequestStatusFilter(e.target.value)} style={{ padding: "10px 12px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, fontSize: 12 }}>
-            <option value="all">Todos los estados</option>
-            <option value="new">Nuevo</option>
-            <option value="analysis">En análisis</option>
-            <option value="progress">En proceso</option>
-            <option value="resolved">Resuelto</option>
-            <option value="rejected">Rechazado</option>
+            {REQUEST_STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
           <select value={requestTypeFilter} onChange={e => setRequestTypeFilter(e.target.value)} style={{ padding: "10px 12px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, fontSize: 12 }}>
-            <option value="all">Todos los tipos</option>
-            <option value="issue">Problemas</option>
-            <option value="change">Cambios</option>
+            {REQUEST_TYPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
         </div>
 
