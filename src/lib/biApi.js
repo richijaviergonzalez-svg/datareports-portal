@@ -1,6 +1,7 @@
 const REPORTS_ENDPOINT = "/.netlify/functions/bi-reports";
 const REQUESTS_ENDPOINT = "/.netlify/functions/bi-requests";
 const AUDIT_ENDPOINT = "/.netlify/functions/bi-audit";
+const INCIDENTS_ENDPOINT = "/.netlify/functions/bi-incidents";
 
 async function buildAuthHeaders(getAccessToken, extra = {}) {
   const token = await getAccessToken();
@@ -109,4 +110,28 @@ export async function createBiAuditEvent({ getAccessToken, event }) {
   });
 
   return readJson(response, "audit-sync-failed");
+}
+
+export async function fetchBiIncidents({ getAccessToken }) {
+  const response = await fetch(INCIDENTS_ENDPOINT, {
+    method: "GET",
+    headers: await buildAuthHeaders(getAccessToken, {
+      Accept: "application/json",
+    }),
+  });
+
+  return readJson(response, "shared-incidents-unavailable");
+}
+
+export async function saveBiIncidents({ getAccessToken, incidents }) {
+  const response = await fetch(INCIDENTS_ENDPOINT, {
+    method: "PUT",
+    headers: await buildAuthHeaders(getAccessToken, {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    }),
+    body: JSON.stringify({ incidents }),
+  });
+
+  return readJson(response, "incident-sync-failed");
 }

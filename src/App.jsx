@@ -53,8 +53,10 @@ import {
   createBiAuditEvent,
   createBiRequest,
   fetchBiAuditEvents,
+  fetchBiIncidents,
   fetchBiRequests,
   fetchReportsCatalog,
+  saveBiIncidents,
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
@@ -1085,7 +1087,7 @@ function KpiCards({ dark, reports, favorites, recentViews }) {
   );
 }
 
-function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, onOpenReport }) {
+function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, manualIncidents = [], isUserAdmin = false, onEditIncidents, onOpenReport }) {
   const theme = dark ? darkTheme : lightTheme;
   const favoriteReports = reports.filter((report) => favorites.includes(report.id) && report.status === "live");
   const recentLiveReports = recentReports
@@ -1118,7 +1120,15 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, onO
       color: "#6366F1",
     },
   ].filter(Boolean);
-  const visibleIncidents = incidents.length ? incidents : [{
+  const manualVisibleIncidents = manualIncidents
+    .filter((incident) => incident.active !== false)
+    .map((incident) => ({
+      id: incident.id,
+      title: incident.title,
+      detail: incident.detail,
+      color: incident.severity === "critical" ? "#EF4444" : incident.severity === "warning" ? "#F59E0B" : incident.severity === "success" ? "#10B981" : "#3B82F6",
+    }));
+  const visibleIncidents = [...manualVisibleIncidents, ...incidents].length ? [...manualVisibleIncidents, ...incidents] : [{
     id: "healthy",
     title: "Sin incidencias informadas",
     detail: "No hay alertas operativas publicadas para los reportes activos.",
@@ -1155,7 +1165,12 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, onO
       </div>
 
       <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
-        <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 12 }}>Incidencias</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700 }}>Incidencias</h3>
+          {isUserAdmin && (
+            <button onClick={onEditIncidents} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 10, padding: "6px 9px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editar</button>
+          )}
+        </div>
         <div style={{ display: "grid", gap: 10 }}>
           {visibleIncidents.map((incident) => (
             <div key={incident.id} style={{ padding: 12, borderRadius: 13, background: dark ? incident.color + "10" : incident.color + "0F", border: `1px solid ${incident.color}33` }}>
@@ -1166,6 +1181,132 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, onO
               <p style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.45 }}>{incident.detail}</p>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IncidentEditor({ dark, incidents, onSave, onClose }) {
+  const theme = dark ? darkTheme : lightTheme;
+  const emptyForm = { title: "", detail: "", severity: "info", active: true };
+  const [drafts, setDrafts] = useState(incidents.length ? incidents : []);
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+  const [error, setError] = useState("");
+  const severityOptions = [
+    { value: "info", label: "Informativa", color: "#3B82F6" },
+    { value: "warning", label: "Atencion", color: "#F59E0B" },
+    { value: "critical", label: "Critica", color: "#EF4444" },
+    { value: "success", label: "Normalizada", color: "#10B981" },
+  ];
+
+  const reset = () => {
+    setForm(emptyForm);
+    setEditingId(null);
+    setError("");
+  };
+
+  const upsertIncident = () => {
+    const cleanTitle = form.title.trim();
+    const cleanDetail = form.detail.trim();
+    if (!cleanTitle || !cleanDetail) {
+      setError("Titulo y detalle son obligatorios.");
+      return;
+    }
+
+    const nextIncident = {
+      id: editingId || `incident-${Date.now()}`,
+      title: cleanTitle.slice(0, 120),
+      detail: cleanDetail.slice(0, 320),
+      severity: form.severity,
+      active: form.active !== false,
+      createdAt: drafts.find((item) => item.id === editingId)?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const nextDrafts = editingId
+      ? drafts.map((item) => item.id === editingId ? nextIncident : item)
+      : [nextIncident, ...drafts].slice(0, 40);
+
+    setDrafts(nextDrafts);
+    reset();
+  };
+
+  const editIncident = (incident) => {
+    setEditingId(incident.id);
+    setForm({
+      title: incident.title || "",
+      detail: incident.detail || "",
+      severity: incident.severity || "info",
+      active: incident.active !== false,
+    });
+    setError("");
+  };
+
+  const removeIncident = (id) => {
+    setDrafts(drafts.filter((incident) => incident.id !== id));
+    if (editingId === id) reset();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 170, background: "rgba(0,0,0,.48)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 860, maxWidth: "96vw", maxHeight: "92vh", overflow: "hidden", background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 22, boxShadow: `0 24px 70px ${dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.18)"}`, display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: theme.text }}>Editar incidencias</h3>
+            <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 3 }}>Avisos publicados en el Home para usuarios del portal.</p>
+          </div>
+          <button onClick={onClose} style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textMuted, cursor: "pointer", fontSize: 16 }}>x</button>
+        </div>
+
+        <div style={{ padding: 22, overflow: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }} className="metrics-grid">
+            <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Titulo de la incidencia" style={{ border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, borderRadius: 12, padding: "11px 12px", outline: "none", fontSize: 13, fontFamily: "'Outfit', system-ui" }}/>
+            <select value={form.severity} onChange={e => setForm({ ...form, severity: e.target.value })} style={{ border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, borderRadius: 12, padding: "11px 12px", outline: "none", fontSize: 13 }}>
+              {severityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </div>
+          <textarea value={form.detail} onChange={e => setForm({ ...form, detail: e.target.value })} placeholder="Detalle visible para los usuarios..." maxLength={320} style={{ width: "100%", minHeight: 92, resize: "vertical", border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, borderRadius: 12, padding: 12, outline: "none", fontSize: 13, lineHeight: 1.55, fontFamily: "'Outfit', system-ui" }}/>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 10, marginBottom: 18, flexWrap: "wrap" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.textSecondary, fontSize: 12 }}>
+              <input type="checkbox" checked={form.active !== false} onChange={e => setForm({ ...form, active: e.target.checked })}/>
+              Publicar aviso activo
+            </label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {editingId && <button onClick={reset} style={{ padding: "9px 12px", borderRadius: 11, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 12 }}>Cancelar edicion</button>}
+              <button onClick={upsertIncident} style={{ padding: "9px 14px", borderRadius: 11, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 800 }}>{editingId ? "Actualizar" : "Agregar aviso"}</button>
+            </div>
+          </div>
+          {error && <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: dark ? "#7F1D1D22" : "#FEF2F2", color: dark ? "#FCA5A5" : "#991B1B", fontSize: 12 }}>{error}</div>}
+
+          <div style={{ display: "grid", gap: 9 }}>
+            {drafts.length === 0 ? (
+              <div style={{ padding: 28, borderRadius: 14, border: `1px dashed ${theme.border}`, color: theme.textMuted, textAlign: "center", fontSize: 12 }}>No hay avisos manuales publicados.</div>
+            ) : drafts.map((incident) => {
+              const severity = severityOptions.find((option) => option.value === incident.severity) || severityOptions[0];
+              return (
+                <div key={incident.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "center", padding: 13, borderRadius: 14, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: severity.color }}/>
+                      <span style={{ color: theme.text, fontSize: 13, fontWeight: 800 }}>{incident.title}</span>
+                      <span style={{ fontSize: 10, color: incident.active === false ? theme.textMuted : "#10B981", background: incident.active === false ? theme.bgCard : "#10B98118", padding: "3px 8px", borderRadius: 999, fontWeight: 700 }}>{incident.active === false ? "Inactivo" : "Activo"}</span>
+                    </div>
+                    <div style={{ color: theme.textMuted, fontSize: 11, lineHeight: 1.45 }}>{incident.detail}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => editIncident(incident)} style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editar</button>
+                    <button onClick={() => removeIncident(incident.id)} style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid #EF444455`, background: dark ? "#EF444412" : "#FEF2F2", color: "#EF4444", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Eliminar</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ padding: "16px 22px", borderTop: `1px solid ${theme.border}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={onClose} style={{ padding: "10px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 13 }}>Cerrar</button>
+          <button onClick={() => onSave(drafts)} style={{ padding: "10px 18px", borderRadius: 12, border: "none", background: T.teal, color: "white", cursor: "pointer", fontSize: 13, fontWeight: 800 }}>Guardar incidencias</button>
         </div>
       </div>
     </div>
@@ -1685,6 +1826,7 @@ function Dashboard({ user, onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
+  const [incidents, setIncidents] = useState([]);
   const [reportZoom, setReportZoom] = useState(100);
   const [requestStatusFilter, setRequestStatusFilter] = useState("all");
   const [requestTypeFilter, setRequestTypeFilter] = useState("all");
@@ -1699,6 +1841,7 @@ function Dashboard({ user, onLogout }) {
   const [auditSyncMessage, setAuditSyncMessage] = useState("Auditoria local");
   const [exporting, setExporting] = useState(false);
   const [actionModal, setActionModal] = useState(null);
+  const [showIncidentEditor, setShowIncidentEditor] = useState(false);
   const [actionDetails, setActionDetails] = useState("");
   const [toast, setToast] = useState(null);
 
@@ -1706,6 +1849,7 @@ function Dashboard({ user, onLogout }) {
   const toggleFav = useCallback((id, e) => { e.stopPropagation(); setFavorites(f => f.includes(id) ? f.filter(x => x !== id) : [...f, id]); }, []);
   const historyInitializedRef = useRef(false);
   const auditEventsRef = useRef([]);
+  const incidentsRef = useRef([]);
 
   const buildUiState = useCallback((overrides = {}) => ({
     app: "datareports",
@@ -1809,6 +1953,10 @@ function Dashboard({ user, onLogout }) {
     if (savedState.recentViews) setRecentViews(savedState.recentViews);
     if (savedState.notifications) setNotifications(savedState.notifications);
     if (savedState.requests) setRequests(savedState.requests);
+    if (savedState.incidents) {
+      incidentsRef.current = savedState.incidents;
+      setIncidents(savedState.incidents);
+    }
     if (savedState.auditEvents) {
       const normalizedAudit = normalizeAuditEvents(savedState.auditEvents);
       auditEventsRef.current = normalizedAudit;
@@ -1820,6 +1968,10 @@ function Dashboard({ user, onLogout }) {
   useEffect(() => {
     auditEventsRef.current = auditEvents;
   }, [auditEvents]);
+
+  useEffect(() => {
+    incidentsRef.current = incidents;
+  }, [incidents]);
 
   useEffect(() => {
     if (!loaded || historyInitializedRef.current) return;
@@ -1840,7 +1992,7 @@ function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener("popstate", handlePopState);
   }, [applyUiState]);
 
-  const saveAll = useCallback((r, f, rv, n, req, audit = auditEventsRef.current) => {
+  const saveAll = useCallback((r, f, rv, n, req, audit = auditEventsRef.current, incidentList = incidentsRef.current) => {
     try {
       savePortalState({
         favorites: f,
@@ -1848,6 +2000,7 @@ function Dashboard({ user, onLogout }) {
         notifications: n || [],
         requests: req || [],
         auditEvents: audit || [],
+        incidents: incidentList || [],
       });
     } catch (e) {}
   }, []);
@@ -2104,6 +2257,38 @@ function Dashboard({ user, onLogout }) {
     }
   }, []);
 
+  const fetchSharedIncidents = useCallback(async () => {
+    try {
+      const data = await fetchBiIncidents({ getAccessToken });
+      if (Array.isArray(data.incidents)) {
+        incidentsRef.current = data.incidents;
+        setIncidents(data.incidents);
+        saveAll(reports, favorites, recentViews, notifications, requests, auditEventsRef.current, data.incidents);
+      }
+    } catch (e) {
+      // Local incident fallback keeps the Home usable if shared storage is unavailable.
+    }
+  }, [reports, favorites, recentViews, notifications, requests, saveAll]);
+
+  const saveSharedIncidents = async (nextIncidents) => {
+    incidentsRef.current = nextIncidents;
+    setIncidents(nextIncidents);
+    saveAll(reports, favorites, recentViews, notifications, requests, auditEventsRef.current, nextIncidents);
+    try {
+      const data = await saveBiIncidents({ getAccessToken, incidents: nextIncidents });
+      if (Array.isArray(data.incidents)) {
+        incidentsRef.current = data.incidents;
+        setIncidents(data.incidents);
+        saveAll(reports, favorites, recentViews, notifications, requests, auditEventsRef.current, data.incidents);
+      }
+      setShowIncidentEditor(false);
+      showToast("Incidencias publicadas");
+    } catch (e) {
+      setShowIncidentEditor(false);
+      showToast("Incidencias guardadas localmente; pendiente sincronizacion", "error");
+    }
+  };
+
   const recordAuditEvent = useCallback((action, subject = {}, metadata = {}) => {
     if (!user?.email) return auditEventsRef.current;
 
@@ -2140,6 +2325,10 @@ function Dashboard({ user, onLogout }) {
   useEffect(() => {
     if (loaded && user?.email) fetchSharedRequests();
   }, [loaded, user?.email, fetchSharedRequests]);
+
+  useEffect(() => {
+    if (loaded && user?.email) fetchSharedIncidents();
+  }, [loaded, user?.email, fetchSharedIncidents]);
 
   useEffect(() => {
     if (loaded && isAdmin(user?.email)) fetchSharedAuditEvents();
@@ -2781,6 +2970,7 @@ function Dashboard({ user, onLogout }) {
     <div style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
       <style>{globalStyles}</style>
       {showAdmin && <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user}/>}
+      {showIncidentEditor && <IncidentEditor dark={dark} incidents={incidents} onSave={saveSharedIncidents} onClose={() => setShowIncidentEditor(false)}/>}
       {showNotif && <div onClick={() => setShowNotif(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }}/>}
       {renderActionModal()}
       {renderToast()}
@@ -2902,7 +3092,7 @@ function Dashboard({ user, onLogout }) {
           {/* Welcome Banner - only on dashboard view */}
           {activeView === "dashboard" && <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews}/>}
 
-          {activeView === "dashboard" && <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} onOpenReport={openReport}/>}
+          {activeView === "dashboard" && <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)} onOpenReport={openReport}/>}
 
           {/* KPI Cards */}
           {false && activeView === "dashboard" && <KpiCards dark={dark} reports={userVisibleReports} favorites={favorites} recentViews={recentViews}/>}
