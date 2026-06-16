@@ -50,7 +50,9 @@ import {
   msalLogin,
 } from "./lib/auth.js";
 import {
+  createBiAuditEvent,
   createBiRequest,
+  fetchBiAuditEvents,
   fetchBiRequests,
   fetchReportsCatalog,
   saveReportsCatalog,
@@ -1284,7 +1286,7 @@ function BiOpsPanel({ dark, reports, requests, onOpenRequests }) {
 // ========================
 // AUDIT PANEL (Admin only)
 // ========================
-function AuditPanel({ dark, events, reports, requests, onOpenReport, onOpenRequest }) {
+function AuditPanel({ dark, events, reports, requests, syncStatus, syncMessage, onRefresh, onOpenReport, onOpenRequest }) {
   const theme = dark ? darkTheme : lightTheme;
   const [actionFilter, setActionFilter] = useState("all");
   const [auditQuery, setAuditQuery] = useState("");
@@ -1347,7 +1349,13 @@ function AuditPanel({ dark, events, reports, requests, onOpenReport, onOpenReque
           <h2 style={{ fontSize: 18, fontWeight: 600, color: theme.text, marginBottom: 4 }}>Auditoria BI</h2>
           <p style={{ fontSize: 12, color: theme.textMuted }}>Rastro operativo local de accesos, solicitudes y acciones administrativas sensibles.</p>
         </div>
-        <button onClick={exportAuditCsv} disabled={filteredEvents.length === 0} style={{ padding: "10px 14px", borderRadius: 12, border: `1px solid ${filteredEvents.length ? T.teal + "55" : theme.border}`, background: filteredEvents.length ? (dark ? T.teal + "14" : T.tealBg) : theme.bgSurface, color: filteredEvents.length ? T.teal : theme.textMuted, cursor: filteredEvents.length ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700 }}>Exportar CSV</button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={onRefresh} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 12, border: `1px solid ${syncStatus === "shared" ? T.teal + "55" : theme.border}`, background: syncStatus === "shared" ? (dark ? T.teal + "14" : T.tealBg) : theme.bgCard, color: syncStatus === "shared" ? T.teal : theme.textMuted, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+            <span style={{ width: 7, height: 7, borderRadius: 999, background: syncStatus === "shared" ? "#10B981" : "#F59E0B" }}/>
+            {syncMessage}
+          </button>
+          <button onClick={exportAuditCsv} disabled={filteredEvents.length === 0} style={{ padding: "10px 14px", borderRadius: 12, border: `1px solid ${filteredEvents.length ? T.teal + "55" : theme.border}`, background: filteredEvents.length ? (dark ? T.teal + "14" : T.tealBg) : theme.bgSurface, color: filteredEvents.length ? T.teal : theme.textMuted, cursor: filteredEvents.length ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700 }}>Exportar CSV</button>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }} className="kpi-grid">
@@ -1599,6 +1607,8 @@ function Dashboard({ user, onLogout }) {
   const [requestSyncMessage, setRequestSyncMessage] = useState("Guardado local");
   const [reportSyncStatus, setReportSyncStatus] = useState("local");
   const [reportSyncMessage, setReportSyncMessage] = useState("Catálogo local");
+  const [auditSyncStatus, setAuditSyncStatus] = useState("local");
+  const [auditSyncMessage, setAuditSyncMessage] = useState("Auditoria local");
   const [exporting, setExporting] = useState(false);
   const [actionModal, setActionModal] = useState(null);
   const [actionDetails, setActionDetails] = useState("");
@@ -1967,6 +1977,44 @@ function Dashboard({ user, onLogout }) {
     setTimeout(() => setToast(null), 3200);
   };
 
+  const fetchSharedAuditEvents = useCallback(async () => {
+    if (!isAdmin(user?.email)) return;
+
+    try {
+      const data = await fetchBiAuditEvents({ getAccessToken });
+      if (Array.isArray(data.events)) {
+        const normalizedAudit = normalizeAuditEvents([
+          ...data.events,
+          ...auditEventsRef.current,
+        ]);
+        const uniqueAudit = Array.from(
+          new Map(normalizedAudit.map((event) => [event.id, event])).values()
+        );
+        auditEventsRef.current = uniqueAudit;
+        setAuditEvents(uniqueAudit);
+        saveAll(reports, favorites, recentViews, notifications, requests, uniqueAudit);
+        setAuditSyncStatus("shared");
+        setAuditSyncMessage("Auditoria sincronizada");
+      }
+    } catch (e) {
+      setAuditSyncStatus("local");
+      setAuditSyncMessage("Auditoria local");
+    }
+  }, [user?.email, reports, favorites, recentViews, notifications, requests, saveAll]);
+
+  const pushSharedAuditEvent = useCallback(async (event) => {
+    try {
+      await createBiAuditEvent({ getAccessToken, event });
+      setAuditSyncStatus("shared");
+      setAuditSyncMessage("Auditoria sincronizada");
+      return true;
+    } catch (e) {
+      setAuditSyncStatus("local");
+      setAuditSyncMessage("Auditoria local");
+      return false;
+    }
+  }, []);
+
   const recordAuditEvent = useCallback((action, subject = {}, metadata = {}) => {
     if (!user?.email) return auditEventsRef.current;
 
@@ -1981,8 +2029,9 @@ function Dashboard({ user, onLogout }) {
     auditEventsRef.current = nextEvents;
     setAuditEvents(nextEvents);
     saveAll(reports, favorites, recentViews, notifications, requests, nextEvents);
+    pushSharedAuditEvent(event);
     return nextEvents;
-  }, [user, reports, favorites, recentViews, notifications, requests, saveAll]);
+  }, [user, reports, favorites, recentViews, notifications, requests, saveAll, pushSharedAuditEvent]);
 
   const fetchSharedRequests = useCallback(async () => {
     try {
@@ -2002,6 +2051,10 @@ function Dashboard({ user, onLogout }) {
   useEffect(() => {
     if (loaded && user?.email) fetchSharedRequests();
   }, [loaded, user?.email, fetchSharedRequests]);
+
+  useEffect(() => {
+    if (loaded && isAdmin(user?.email)) fetchSharedAuditEvents();
+  }, [loaded, user?.email, fetchSharedAuditEvents]);
 
   useEffect(() => {
     setRequestAdminNote(selectedRequest?.adminNote || "");
@@ -2829,7 +2882,7 @@ function Dashboard({ user, onLogout }) {
           {activeView === "biops" && isAdmin(user.email) && <BiOpsPanel dark={dark} reports={reports} requests={requests} onOpenRequests={openRequestsQueue}/>}
 
           {/* Audit Panel - admin only */}
-          {activeView === "audit" && isAdmin(user.email) && <AuditPanel dark={dark} events={auditEvents} reports={reports} requests={requests} onOpenReport={openReport} onOpenRequest={openAuditedRequest}/>}
+          {activeView === "audit" && isAdmin(user.email) && <AuditPanel dark={dark} events={auditEvents} reports={reports} requests={requests} syncStatus={auditSyncStatus} syncMessage={auditSyncMessage} onRefresh={fetchSharedAuditEvents} onOpenReport={openReport} onOpenRequest={openAuditedRequest}/>}
 
           {/* Requests module */}
           {activeView === "requests" && renderRequestsPanel()}
