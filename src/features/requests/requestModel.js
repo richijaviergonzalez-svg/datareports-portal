@@ -42,6 +42,15 @@ export const REQUEST_PRIORITY_OPTIONS = [
   { value: "critica", label: REQUEST_PRIORITY_LABELS.critica },
 ];
 
+export const REQUEST_QUICK_FILTER_OPTIONS = [
+  { value: "all", label: "Todo" },
+  { value: "urgent", label: "Urgente" },
+  { value: "breached", label: "Fuera SLA" },
+  { value: "at-risk", label: "En riesgo" },
+  { value: "critical", label: "Críticas" },
+  { value: "no-note", label: "Sin nota admin" },
+];
+
 const SLA_TARGET_HOURS = {
   baja: 72,
   media: 24,
@@ -112,12 +121,29 @@ export function getVisibleRequests(requests = [], user = {}) {
   return list.filter((request) => request.userEmail === user?.email);
 }
 
-export function filterRequests(requests = [], { statusFilter = "all", typeFilter = "all", query = "" } = {}) {
+function matchesQuickFilter(request, quickFilter) {
+  if (!quickFilter || quickFilter === "all") return true;
+  const sla = getRequestSla(request);
+
+  if (quickFilter === "urgent") {
+    return sla.isBreached || sla.label === "En riesgo" || request.priority === "critica";
+  }
+
+  if (quickFilter === "breached") return sla.isBreached;
+  if (quickFilter === "at-risk") return sla.label === "En riesgo";
+  if (quickFilter === "critical") return request.priority === "critica";
+  if (quickFilter === "no-note") return OPEN_STATUSES.includes(request.status) && !String(request.adminNote || "").trim();
+
+  return true;
+}
+
+export function filterRequests(requests = [], { statusFilter = "all", typeFilter = "all", quickFilter = "all", query = "" } = {}) {
   const list = Array.isArray(requests) ? requests : [];
   const search = String(query || "").toLowerCase();
   return list.filter((request) => {
     const matchesStatus = statusFilter === "all" || request.status === statusFilter;
     const matchesType = typeFilter === "all" || request.type === typeFilter;
+    const matchesQuick = matchesQuickFilter(request, quickFilter);
     const matchesSearch = !search || [
       request.id,
       request.reportName,
@@ -130,7 +156,7 @@ export function filterRequests(requests = [], { statusFilter = "all", typeFilter
       REQUEST_STATUS_LABELS[request.status],
     ].some((value) => String(value || "").toLowerCase().includes(search));
 
-    return matchesStatus && matchesType && matchesSearch;
+    return matchesStatus && matchesType && matchesQuick && matchesSearch;
   });
 }
 
@@ -354,4 +380,94 @@ export function getBiOpsInsights(requests = [], reports = [], now = new Date()) 
     priorityDistribution: rankCounts(priorityCounts),
     topSlaRisk,
   };
+}
+
+export function getBiOpsAlerts(requests = [], reports = [], now = new Date()) {
+  const ops = getBiOpsInsights(requests, reports, now);
+  const list = Array.isArray(requests) ? requests : [];
+  const openRequests = list.filter((request) => OPEN_STATUSES.includes(request.status));
+  const criticalOpen = openRequests.filter((request) => request.priority === "critica");
+  const noAdminNote = openRequests.filter((request) => !String(request.adminNote || "").trim());
+  const highDemandReport = ops.topReports[0] || null;
+  const highDemandCategory = ops.topCategories[0] || null;
+  const alerts = [];
+
+  if (ops.breached > 0) {
+    alerts.push({
+      id: "sla-breached",
+      severity: "critical",
+      title: `${ops.breached} solicitud${ops.breached === 1 ? "" : "es"} fuera de SLA`,
+      detail: "Atender antes de tomar nuevas mejoras para evitar pérdida de confianza operativa.",
+      filter: "breached",
+      cta: "Ver fuera SLA",
+    });
+  }
+
+  if (ops.atRisk > 0) {
+    alerts.push({
+      id: "sla-risk",
+      severity: "warning",
+      title: `${ops.atRisk} solicitud${ops.atRisk === 1 ? "" : "es"} en riesgo`,
+      detail: "Conviene anticiparse y moverlas a resolución o documentar bloqueo.",
+      filter: "at-risk",
+      cta: "Ver en riesgo",
+    });
+  }
+
+  if (criticalOpen.length > 0) {
+    alerts.push({
+      id: "critical-open",
+      severity: "critical",
+      title: `${criticalOpen.length} prioridad crítica abierta`,
+      detail: "Revisar responsable, nota administrativa y próximo paso.",
+      filter: "critical",
+      cta: "Ver críticas",
+    });
+  }
+
+  if (noAdminNote.length >= 3) {
+    alerts.push({
+      id: "missing-notes",
+      severity: "info",
+      title: `${noAdminNote.length} solicitudes abiertas sin nota admin`,
+      detail: "Agregar contexto ayuda a mantener continuidad si cambia el responsable.",
+      filter: "no-note",
+      cta: "Completar notas",
+    });
+  }
+
+  if (highDemandReport?.value >= 3) {
+    alerts.push({
+      id: "report-demand",
+      severity: "warning",
+      title: `${highDemandReport.label} concentra demanda`,
+      detail: `${highDemandReport.value} solicitudes asociadas. Puede ameritar mejora estructural o revisión del dataset.`,
+      filter: "all",
+      cta: "Ver solicitudes",
+    });
+  }
+
+  if (highDemandCategory?.value >= 4) {
+    alerts.push({
+      id: "category-demand",
+      severity: "info",
+      title: `${highDemandCategory.label} lidera la demanda BI`,
+      detail: `${highDemandCategory.value} solicitudes. Señal útil para priorizar roadmap por área.`,
+      filter: "all",
+      cta: "Analizar backlog",
+    });
+  }
+
+  if (!alerts.length && openRequests.length > 0) {
+    alerts.push({
+      id: "healthy-backlog",
+      severity: "success",
+      title: "Backlog bajo control",
+      detail: "No hay alertas críticas activas; buen momento para trabajar mejoras preventivas.",
+      filter: "all",
+      cta: "Ver backlog",
+    });
+  }
+
+  return alerts;
 }

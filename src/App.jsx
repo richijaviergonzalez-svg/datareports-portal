@@ -15,6 +15,7 @@ import {
 import {
   REQUEST_PRIORITY_LABELS,
   REQUEST_PRIORITY_OPTIONS,
+  REQUEST_QUICK_FILTER_OPTIONS,
   REQUEST_ADMIN_NOTE_MAX_LENGTH,
   REQUEST_DETAIL_MAX_LENGTH,
   REQUEST_STATUS_LABELS,
@@ -23,6 +24,7 @@ import {
   REQUEST_TYPE_OPTIONS,
   createBiPortalRequest,
   filterRequests,
+  getBiOpsAlerts,
   getBiOpsInsights,
   getRequestStatusColor,
   getRequestSla,
@@ -879,6 +881,9 @@ const globalStyles = `
 function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, categories, activeCategory, setActiveCategory, reports, favorites, requests = [], user, onLogout, isUserAdmin, mobileOpen = false, onMobileClose }) {
   const theme = dark ? darkTheme : lightTheme;
   const w = collapsed ? 68 : 260;
+  const opsAlertCount = isUserAdmin
+    ? getBiOpsAlerts(requests, reports).filter((alert) => alert.severity !== "success").length
+    : 0;
 
   const navItems = [
     { id: "dashboard", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.3" fill="none"/><rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.3" fill="none"/><rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.3" fill="none"/><rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>, label: "Dashboard" },
@@ -886,7 +891,7 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
     { id: "recent", icon: <svg width="18" height="18" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>, label: "Recientes" },
     { id: "requests", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 6h6M5 8.5h4M5 11h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>, label: "Solicitudes BI", count: requests.filter(r => isUserAdmin || r.userEmail === user?.email).length },
     ...(isUserAdmin ? [
-      { id: "biops", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 10l2-3 2 1.8 2-3.3" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "BI Ops" },
+      { id: "biops", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 10l2-3 2 1.8 2-3.3" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "BI Ops", count: opsAlertCount },
       { id: "metrics", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M2 14l4-5 3 2 5-7" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Métricas" },
     ] : []),
   ];
@@ -1090,9 +1095,16 @@ function HealthBadge({ report, dark }) {
 function BiOpsPanel({ dark, reports, requests, onOpenRequests }) {
   const theme = dark ? darkTheme : lightTheme;
   const ops = getBiOpsInsights(requests, reports);
+  const alerts = getBiOpsAlerts(requests, reports);
   const scoreColor = ops.opsScore >= 80 ? "#10B981" : ops.opsScore >= 60 ? "#F59E0B" : "#EF4444";
   const maxReportDemand = Math.max(...ops.topReports.map((item) => item.value), 1);
   const maxCategoryDemand = Math.max(...ops.topCategories.map((item) => item.value), 1);
+  const alertStyle = {
+    critical: { color: "#EF4444", bg: dark ? "#EF444410" : "#FEF2F2", border: dark ? "#EF444433" : "#FECACA" },
+    warning: { color: "#F59E0B", bg: dark ? "#F59E0B12" : "#FFFBEB", border: dark ? "#F59E0B33" : "#FDE68A" },
+    info: { color: "#3B82F6", bg: dark ? "#3B82F612" : "#EFF6FF", border: dark ? "#3B82F633" : "#BFDBFE" },
+    success: { color: "#10B981", bg: dark ? "#10B98112" : "#ECFDF5", border: dark ? "#10B98133" : "#A7F3D0" },
+  };
 
   const OpsKpi = ({ label, value, detail, color }) => (
     <div style={{ background: theme.bgCard, borderRadius: 16, border: `1px solid ${theme.border}`, padding: "16px 18px" }}>
@@ -1166,6 +1178,45 @@ function BiOpsPanel({ dark, reports, requests, onOpenRequests }) {
           <OpsKpi label="SLA vencidos" value={ops.breached} detail={`${ops.atRisk} en riesgo`} color="#EF4444"/>
           <OpsKpi label="Prom. resolución" value={ops.avgResolutionHours ? `${ops.avgResolutionHours}h` : "N/D"} detail="Solicitudes resueltas" color="#6366F1"/>
           <OpsKpi label="Reportes impactados" value={ops.affectedActiveReports} detail="Activos con incidencias" color="#F59E0B"/>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1.1fr .9fr", gap: 16, marginBottom: 16 }} className="metrics-grid">
+        <div style={{ background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, padding: 20 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 16 }}>Alertas inteligentes</h3>
+          <div style={{ display: "grid", gap: 10 }}>
+            {alerts.slice(0, 4).map((alert) => {
+              const style = alertStyle[alert.severity] || alertStyle.info;
+              return (
+                <div key={alert.id} style={{ padding: 14, borderRadius: 14, background: style.bg, border: `1px solid ${style.border}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: style.color, fontWeight: 800, marginBottom: 4 }}>{alert.title}</div>
+                      <div style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.5 }}>{alert.detail}</div>
+                    </div>
+                    <button onClick={() => onOpenRequests(alert.filter)} style={{ flexShrink: 0, padding: "7px 9px", borderRadius: 10, border: `1px solid ${style.border}`, background: theme.bgCard, color: style.color, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>{alert.cta}</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, padding: 20 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 16 }}>Top prioridades de hoy</h3>
+          {ops.topSlaRisk.length ? ops.topSlaRisk.slice(0, 4).map(({ request, sla }, i) => (
+            <button key={request.id} onClick={() => onOpenRequests(sla.isBreached ? "breached" : request.priority === "critica" ? "critical" : "urgent")} style={{ width: "100%", display: "grid", gridTemplateColumns: "28px minmax(0, 1fr) 82px", gap: 10, alignItems: "center", padding: "10px 0", border: "none", borderBottom: i < Math.min(ops.topSlaRisk.length, 4) - 1 ? `1px solid ${theme.border}` : "none", background: "transparent", cursor: "pointer", textAlign: "left" }}>
+              <div style={{ width: 26, height: 26, borderRadius: 9, background: sla.color + "14", color: sla.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800 }}>{i + 1}</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{request.reportName}</div>
+                <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{REQUEST_PRIORITY_LABELS[request.priority] || request.priority} · {request.userName}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, color: sla.color, fontWeight: 800 }}>{sla.label}</div>
+                <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>{sla.detail}</div>
+              </div>
+            </button>
+          )) : <EmptyState>No hay prioridades urgentes hoy.</EmptyState>}
         </div>
       </div>
 
@@ -1400,6 +1451,7 @@ function Dashboard({ user, onLogout }) {
   const [requests, setRequests] = useState([]);
   const [requestStatusFilter, setRequestStatusFilter] = useState("all");
   const [requestTypeFilter, setRequestTypeFilter] = useState("all");
+  const [requestQuickFilter, setRequestQuickFilter] = useState("all");
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [requestAdminNote, setRequestAdminNote] = useState("");
   const [requestSyncStatus, setRequestSyncStatus] = useState("local");
@@ -1896,6 +1948,7 @@ function Dashboard({ user, onLogout }) {
   const filteredRequests = filterRequests(visibleRequests, {
     statusFilter: requestStatusFilter,
     typeFilter: requestTypeFilter,
+    quickFilter: requestQuickFilter,
     query: searchQuery,
   });
   const requestStats = getRequestStats(visibleRequests);
@@ -1920,6 +1973,13 @@ function Dashboard({ user, onLogout }) {
   const saveRequestAdminNote = () => {
     if (!selectedRequest) return;
     updateRequestWorkflow(selectedRequest.id, { adminNote: requestAdminNote }, "Nota administrativa guardada");
+  };
+
+  const openRequestsQueue = (quickFilter = "all") => {
+    setRequestQuickFilter(quickFilter);
+    setRequestStatusFilter("all");
+    setRequestTypeFilter("all");
+    navigateToView("requests");
   };
 
   const sidebarWidth = sidebarCollapsed ? 68 : 260;
@@ -1979,6 +2039,14 @@ function Dashboard({ user, onLogout }) {
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", width: "100%" }}>
+            {REQUEST_QUICK_FILTER_OPTIONS.map((option) => {
+              const active = requestQuickFilter === option.value;
+              return (
+                <button key={option.value} onClick={() => setRequestQuickFilter(option.value)} style={{ padding: "7px 10px", borderRadius: 999, border: `1px solid ${active ? T.teal + "66" : theme.border}`, background: active ? (dark ? T.teal + "16" : T.tealBg) : theme.bgSurface, color: active ? T.teal : theme.textMuted, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>{option.label}</button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="requests-layout" style={{ display: "grid", gridTemplateColumns: selectedRequest ? "minmax(0, 1fr) 420px" : "1fr", gap: 16 }}>
@@ -2537,7 +2605,7 @@ function Dashboard({ user, onLogout }) {
           {activeView === "metrics" && isAdmin(user.email) && <MetricsPanel dark={dark} reports={reports} recentViews={recentViews} favorites={favorites}/>}
 
           {/* BI Ops Panel - admin only */}
-          {activeView === "biops" && isAdmin(user.email) && <BiOpsPanel dark={dark} reports={reports} requests={requests} onOpenRequests={() => navigateToView("requests")}/>}
+          {activeView === "biops" && isAdmin(user.email) && <BiOpsPanel dark={dark} reports={reports} requests={requests} onOpenRequests={openRequestsQueue}/>}
 
           {/* Requests module */}
           {activeView === "requests" && renderRequestsPanel()}
