@@ -53,8 +53,10 @@ import {
   createBiAuditEvent,
   createBiRequest,
   fetchBiAuditEvents,
+  fetchBiIncidents,
   fetchBiRequests,
   fetchReportsCatalog,
+  saveBiIncidents,
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
@@ -1008,7 +1010,7 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
       background: dark
         ? `linear-gradient(135deg, ${T.teal}12, ${T.tealDark}08)`
         : `linear-gradient(135deg, ${T.tealBg}, #FFFFFF)`,
-      borderRadius: 20, padding: "28px 32px", marginBottom: 24,
+      borderRadius: 18, padding: "18px 24px", marginBottom: 16,
       border: `1px solid ${dark ? T.teal + "15" : T.teal + "12"}`,
       animation: "fadeUp .5s ease-out", position: "relative", overflow: "hidden",
     }}>
@@ -1032,13 +1034,13 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 16, marginTop: 20 }}>
-          <div style={{ padding: "8px 16px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+          <div style={{ padding: "7px 12px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 8, height: 8, borderRadius: 4, background: "#10B981", animation: "breathe 3s ease-in-out infinite" }}/>
             <span style={{ fontSize: 12, color: theme.text }}><strong>{activeReports}</strong> reportes activos</span>
           </div>
           {lastReport && (
-            <div style={{ padding: "8px 16px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ padding: "7px 12px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
               <span style={{ fontSize: 12, color: theme.textMuted }}>Último: <span style={{ color: theme.text, fontWeight: 500 }}>{lastReport.name}</span></span>
             </div>
@@ -1081,6 +1083,255 @@ function KpiCards({ dark, reports, favorites, recentViews }) {
           <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>{kpi.label}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, manualIncidents = [], isUserAdmin = false, onEditIncidents, onOpenReport }) {
+  const theme = dark ? darkTheme : lightTheme;
+  const favoriteReports = reports.filter((report) => favorites.includes(report.id) && report.status === "live");
+  const recentLiveReports = recentReports
+    .map((recent) => reports.find((report) => report.id === recent.id))
+    .filter((report) => report && report.status === "live");
+  const liveReports = reports.filter((report) => report.status === "live");
+  const quickReports = Array.from(
+    new Map([...favoriteReports, ...recentLiveReports, ...liveReports].map((report) => [report.id, report])).values()
+  ).slice(0, 6);
+  const maintenanceReports = reports.filter((report) => report.status === "maintenance");
+  const draftReports = reports.filter((report) => report.status === "draft");
+  const openIssues = requests.filter((request) => request.type === "issue" && !["resolved", "rejected"].includes(request.status));
+  const incidents = [
+    maintenanceReports.length > 0 && {
+      id: "maintenance",
+      title: "Reportes en mantenimiento",
+      detail: `${maintenanceReports.length} reporte${maintenanceReports.length === 1 ? "" : "s"} requieren revision antes de usarse.`,
+      color: "#EF4444",
+    },
+    openIssues.length > 0 && {
+      id: "issues",
+      title: "Incidencias reportadas",
+      detail: `${openIssues.length} incidencia${openIssues.length === 1 ? "" : "s"} abiertas por usuarios.`,
+      color: "#F59E0B",
+    },
+    draftReports.length > 0 && {
+      id: "drafts",
+      title: "Reportes en preparacion",
+      detail: `${draftReports.length} reporte${draftReports.length === 1 ? "" : "s"} aun no estan publicados.`,
+      color: "#6366F1",
+    },
+  ].filter(Boolean);
+  const manualVisibleIncidents = manualIncidents
+    .filter((incident) => incident.active !== false)
+    .map((incident) => ({
+      id: incident.id,
+      title: incident.title,
+      detail: incident.detail,
+      color: incident.severity === "critical" ? "#EF4444" : incident.severity === "warning" ? "#F59E0B" : incident.severity === "success" ? "#10B981" : "#3B82F6",
+    }));
+  const visibleIncidents = [...manualVisibleIncidents, ...incidents].length ? [...manualVisibleIncidents, ...incidents] : [{
+    id: "healthy",
+    title: "Sin incidencias informadas",
+    detail: "No hay alertas operativas publicadas para los reportes activos.",
+    color: "#10B981",
+  }];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(280px, .55fr)", gap: 14, marginBottom: 18 }} className="metrics-grid">
+      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
+          <div>
+            <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 3 }}>Reportes principales</h3>
+            <p style={{ fontSize: 11, color: theme.textMuted }}>Acceso directo a los tableros mas usados y disponibles.</p>
+          </div>
+          <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, border: `1px solid ${T.teal}33`, borderRadius: 999, padding: "5px 10px", fontWeight: 700 }}>{liveReports.length} activos</span>
+        </div>
+        <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10 }}>
+          {quickReports.map((report, index) => {
+            const colors = categoryColors[report.category] || categoryColors.Comercial;
+            return (
+              <button key={report.id} onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", animation: `scaleIn .25s ease-out ${.035 * index}s both` }}>
+                <span style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg width="17" height="17" viewBox="0 0 22 22">{iconPaths[report.icon]}</svg>
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 13, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</span>
+                  <span style={{ display: "block", fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.category}</span>
+                </span>
+                <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700 }}>Incidencias</h3>
+          {isUserAdmin && (
+            <button onClick={onEditIncidents} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 10, padding: "6px 9px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editar</button>
+          )}
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {visibleIncidents.map((incident) => (
+            <div key={incident.id} style={{ padding: 12, borderRadius: 13, background: dark ? incident.color + "10" : incident.color + "0F", border: `1px solid ${incident.color}33` }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: incident.color }}/>
+                <span style={{ fontSize: 12, color: theme.text, fontWeight: 800 }}>{incident.title}</span>
+              </div>
+              <p style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.45 }}>{incident.detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IncidentEditor({ dark, incidents, onSave, onClose }) {
+  const theme = dark ? darkTheme : lightTheme;
+  const emptyForm = { title: "", detail: "", severity: "info", active: true };
+  const [drafts, setDrafts] = useState(incidents.length ? incidents : []);
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+  const [error, setError] = useState("");
+  const severityOptions = [
+    { value: "info", label: "Informativa", color: "#3B82F6" },
+    { value: "warning", label: "Atencion", color: "#F59E0B" },
+    { value: "critical", label: "Critica", color: "#EF4444" },
+    { value: "success", label: "Normalizada", color: "#10B981" },
+  ];
+
+  const reset = () => {
+    setForm(emptyForm);
+    setEditingId(null);
+    setError("");
+  };
+
+  const buildIncidentFromForm = () => {
+    const cleanTitle = form.title.trim();
+    const cleanDetail = form.detail.trim();
+    if (!cleanTitle || !cleanDetail) {
+      setError("Titulo y detalle son obligatorios.");
+      return null;
+    }
+
+    return {
+      id: editingId || `incident-${Date.now()}`,
+      title: cleanTitle.slice(0, 120),
+      detail: cleanDetail.slice(0, 320),
+      severity: form.severity,
+      active: form.active !== false,
+      createdAt: drafts.find((item) => item.id === editingId)?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  };
+
+  const mergeIncidentDraft = (incident) => editingId
+    ? drafts.map((item) => item.id === editingId ? incident : item)
+    : [incident, ...drafts].slice(0, 40);
+
+  const upsertIncident = () => {
+    const nextIncident = buildIncidentFromForm();
+    if (!nextIncident) return;
+
+    const nextDrafts = mergeIncidentDraft(nextIncident);
+    setDrafts(nextDrafts);
+    reset();
+  };
+
+  const saveIncidents = () => {
+    const hasPendingForm = form.title.trim() || form.detail.trim();
+    if (!hasPendingForm) {
+      onSave(drafts);
+      return;
+    }
+
+    const nextIncident = buildIncidentFromForm();
+    if (!nextIncident) return;
+
+    const nextDrafts = mergeIncidentDraft(nextIncident);
+    setDrafts(nextDrafts);
+    reset();
+    onSave(nextDrafts);
+  };
+
+  const editIncident = (incident) => {
+    setEditingId(incident.id);
+    setForm({
+      title: incident.title || "",
+      detail: incident.detail || "",
+      severity: incident.severity || "info",
+      active: incident.active !== false,
+    });
+    setError("");
+  };
+
+  const removeIncident = (id) => {
+    setDrafts(drafts.filter((incident) => incident.id !== id));
+    if (editingId === id) reset();
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 170, background: "rgba(0,0,0,.48)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 860, maxWidth: "96vw", maxHeight: "92vh", overflow: "hidden", background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 22, boxShadow: `0 24px 70px ${dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.18)"}`, display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div>
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: theme.text }}>Editar incidencias</h3>
+            <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 3 }}>Avisos publicados en el Home para usuarios del portal.</p>
+          </div>
+          <button onClick={onClose} style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textMuted, cursor: "pointer", fontSize: 16 }}>x</button>
+        </div>
+
+        <div style={{ padding: 22, overflow: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }} className="metrics-grid">
+            <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Titulo de la incidencia" style={{ border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, borderRadius: 12, padding: "11px 12px", outline: "none", fontSize: 13, fontFamily: "'Outfit', system-ui" }}/>
+            <select value={form.severity} onChange={e => setForm({ ...form, severity: e.target.value })} style={{ border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, borderRadius: 12, padding: "11px 12px", outline: "none", fontSize: 13 }}>
+              {severityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </div>
+          <textarea value={form.detail} onChange={e => setForm({ ...form, detail: e.target.value })} placeholder="Detalle visible para los usuarios..." maxLength={320} style={{ width: "100%", minHeight: 92, resize: "vertical", border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, borderRadius: 12, padding: 12, outline: "none", fontSize: 13, lineHeight: 1.55, fontFamily: "'Outfit', system-ui" }}/>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 10, marginBottom: 18, flexWrap: "wrap" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, color: theme.textSecondary, fontSize: 12 }}>
+              <input type="checkbox" checked={form.active !== false} onChange={e => setForm({ ...form, active: e.target.checked })}/>
+              Publicar aviso activo
+            </label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {editingId && <button onClick={reset} style={{ padding: "9px 12px", borderRadius: 11, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 12 }}>Cancelar edicion</button>}
+              <button onClick={upsertIncident} style={{ padding: "9px 14px", borderRadius: 11, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 800 }}>{editingId ? "Actualizar" : "Agregar a lista"}</button>
+            </div>
+          </div>
+          {error && <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: dark ? "#7F1D1D22" : "#FEF2F2", color: dark ? "#FCA5A5" : "#991B1B", fontSize: 12 }}>{error}</div>}
+
+          <div style={{ display: "grid", gap: 9 }}>
+            {drafts.length === 0 ? (
+              <div style={{ padding: 28, borderRadius: 14, border: `1px dashed ${theme.border}`, color: theme.textMuted, textAlign: "center", fontSize: 12 }}>Escribi un aviso y guardalo para publicarlo en el Home.</div>
+            ) : drafts.map((incident) => {
+              const severity = severityOptions.find((option) => option.value === incident.severity) || severityOptions[0];
+              return (
+                <div key={incident.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "center", padding: 13, borderRadius: 14, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: severity.color }}/>
+                      <span style={{ color: theme.text, fontSize: 13, fontWeight: 800 }}>{incident.title}</span>
+                      <span style={{ fontSize: 10, color: incident.active === false ? theme.textMuted : "#10B981", background: incident.active === false ? theme.bgCard : "#10B98118", padding: "3px 8px", borderRadius: 999, fontWeight: 700 }}>{incident.active === false ? "Inactivo" : "Activo"}</span>
+                    </div>
+                    <div style={{ color: theme.textMuted, fontSize: 11, lineHeight: 1.45 }}>{incident.detail}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => editIncident(incident)} style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editar</button>
+                    <button onClick={() => removeIncident(incident.id)} style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid #EF444455`, background: dark ? "#EF444412" : "#FEF2F2", color: "#EF4444", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Eliminar</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ padding: "16px 22px", borderTop: `1px solid ${theme.border}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={onClose} style={{ padding: "10px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 13 }}>Cerrar</button>
+          <button onClick={saveIncidents} style={{ padding: "10px 18px", borderRadius: 12, border: "none", background: T.teal, color: "white", cursor: "pointer", fontSize: 13, fontWeight: 800 }}>Guardar y publicar</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1598,6 +1849,8 @@ function Dashboard({ user, onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
+  const [incidents, setIncidents] = useState([]);
+  const [reportZoom, setReportZoom] = useState(100);
   const [requestStatusFilter, setRequestStatusFilter] = useState("all");
   const [requestTypeFilter, setRequestTypeFilter] = useState("all");
   const [requestQuickFilter, setRequestQuickFilter] = useState("all");
@@ -1611,6 +1864,7 @@ function Dashboard({ user, onLogout }) {
   const [auditSyncMessage, setAuditSyncMessage] = useState("Auditoria local");
   const [exporting, setExporting] = useState(false);
   const [actionModal, setActionModal] = useState(null);
+  const [showIncidentEditor, setShowIncidentEditor] = useState(false);
   const [actionDetails, setActionDetails] = useState("");
   const [toast, setToast] = useState(null);
 
@@ -1618,6 +1872,7 @@ function Dashboard({ user, onLogout }) {
   const toggleFav = useCallback((id, e) => { e.stopPropagation(); setFavorites(f => f.includes(id) ? f.filter(x => x !== id) : [...f, id]); }, []);
   const historyInitializedRef = useRef(false);
   const auditEventsRef = useRef([]);
+  const incidentsRef = useRef([]);
 
   const buildUiState = useCallback((overrides = {}) => ({
     app: "datareports",
@@ -1721,6 +1976,10 @@ function Dashboard({ user, onLogout }) {
     if (savedState.recentViews) setRecentViews(savedState.recentViews);
     if (savedState.notifications) setNotifications(savedState.notifications);
     if (savedState.requests) setRequests(savedState.requests);
+    if (savedState.incidents) {
+      incidentsRef.current = savedState.incidents;
+      setIncidents(savedState.incidents);
+    }
     if (savedState.auditEvents) {
       const normalizedAudit = normalizeAuditEvents(savedState.auditEvents);
       auditEventsRef.current = normalizedAudit;
@@ -1732,6 +1991,10 @@ function Dashboard({ user, onLogout }) {
   useEffect(() => {
     auditEventsRef.current = auditEvents;
   }, [auditEvents]);
+
+  useEffect(() => {
+    incidentsRef.current = incidents;
+  }, [incidents]);
 
   useEffect(() => {
     if (!loaded || historyInitializedRef.current) return;
@@ -1752,7 +2015,7 @@ function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener("popstate", handlePopState);
   }, [applyUiState]);
 
-  const saveAll = useCallback((r, f, rv, n, req, audit = auditEventsRef.current) => {
+  const saveAll = useCallback((r, f, rv, n, req, audit = auditEventsRef.current, incidentList = incidentsRef.current) => {
     try {
       savePortalState({
         favorites: f,
@@ -1760,6 +2023,7 @@ function Dashboard({ user, onLogout }) {
         notifications: n || [],
         requests: req || [],
         auditEvents: audit || [],
+        incidents: incidentList || [],
       });
     } catch (e) {}
   }, []);
@@ -1902,6 +2166,7 @@ function Dashboard({ user, onLogout }) {
       return;
     }
     const { pushHistory = true } = options;
+    setReportZoom(100);
     setSelectedReport(report);
     setDetailReport(null);
     if (pushHistory) {
@@ -2015,6 +2280,38 @@ function Dashboard({ user, onLogout }) {
     }
   }, []);
 
+  const fetchSharedIncidents = useCallback(async () => {
+    try {
+      const data = await fetchBiIncidents({ getAccessToken });
+      if (Array.isArray(data.incidents)) {
+        incidentsRef.current = data.incidents;
+        setIncidents(data.incidents);
+        saveAll(reports, favorites, recentViews, notifications, requests, auditEventsRef.current, data.incidents);
+      }
+    } catch (e) {
+      // Local incident fallback keeps the Home usable if shared storage is unavailable.
+    }
+  }, [reports, favorites, recentViews, notifications, requests, saveAll]);
+
+  const saveSharedIncidents = async (nextIncidents) => {
+    incidentsRef.current = nextIncidents;
+    setIncidents(nextIncidents);
+    saveAll(reports, favorites, recentViews, notifications, requests, auditEventsRef.current, nextIncidents);
+    try {
+      const data = await saveBiIncidents({ getAccessToken, incidents: nextIncidents });
+      if (Array.isArray(data.incidents)) {
+        incidentsRef.current = data.incidents;
+        setIncidents(data.incidents);
+        saveAll(reports, favorites, recentViews, notifications, requests, auditEventsRef.current, data.incidents);
+      }
+      setShowIncidentEditor(false);
+      showToast("Incidencias publicadas");
+    } catch (e) {
+      setShowIncidentEditor(false);
+      showToast("Incidencias guardadas localmente; pendiente sincronizacion", "error");
+    }
+  };
+
   const recordAuditEvent = useCallback((action, subject = {}, metadata = {}) => {
     if (!user?.email) return auditEventsRef.current;
 
@@ -2051,6 +2348,10 @@ function Dashboard({ user, onLogout }) {
   useEffect(() => {
     if (loaded && user?.email) fetchSharedRequests();
   }, [loaded, user?.email, fetchSharedRequests]);
+
+  useEffect(() => {
+    if (loaded && user?.email) fetchSharedIncidents();
+  }, [loaded, user?.email, fetchSharedIncidents]);
 
   useEffect(() => {
     if (loaded && isAdmin(user?.email)) fetchSharedAuditEvents();
@@ -2569,7 +2870,18 @@ function Dashboard({ user, onLogout }) {
     const isDraft = selectedReport.status === "draft";
     const lastView = recentViews.find(r => r.id === selectedReport.id);
     const fullscreenToggle = () => { const el = document.getElementById("report-embed-container"); if (el) { if (document.fullscreenElement) document.exitFullscreen(); else if (el.requestFullscreen) el.requestFullscreen(); else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen(); } };
-    const zoomReport = (level) => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.setZoom(level / 100); } catch(err) {} } };
+    const zoomReport = (level) => {
+      const nextZoom = Math.max(60, Math.min(180, level));
+      setReportZoom(nextZoom);
+      const c = document.getElementById(`pbi-container-${selectedReport.id}`);
+      const service = getLoadedPowerBiService();
+      if (c && service) {
+        try {
+          const e = service.get(c);
+          if (e) e.setZoom(nextZoom / 100);
+        } catch(err) {}
+      }
+    };
     const reloadReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.reload(); } catch(err) {} } };
     const printReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.print(); } catch(err) {} } };
 
@@ -2622,13 +2934,9 @@ function Dashboard({ user, onLogout }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ fontSize: 10, color: theme.textMuted, marginRight: 4 }}>Zoom:</span>
-            {[75, 100, 125, 150].map(z => (
-              <button key={z} onClick={() => zoomReport(z)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", fontSize: 10, color: theme.textSecondary, transition: "all .15s" }}
-                onMouseEnter={e => { e.currentTarget.style.background = T.teal; e.currentTarget.style.color = "white"; e.currentTarget.style.borderColor = T.teal; }}
-                onMouseLeave={e => { e.currentTarget.style.background = theme.bgSurface; e.currentTarget.style.color = theme.textSecondary; e.currentTarget.style.borderColor = theme.border; }}>
-                {z}%
-              </button>
-            ))}
+            <button onClick={() => zoomReport(reportZoom - 10)} disabled={reportZoom <= 60} title="Alejar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom <= 60 ? "not-allowed" : "pointer", color: reportZoom <= 60 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>-</button>
+            <span style={{ minWidth: 42, textAlign: "center", fontSize: 10, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{reportZoom}%</span>
+            <button onClick={() => zoomReport(reportZoom + 10)} disabled={reportZoom >= 180} title="Acercar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom >= 180 ? "not-allowed" : "pointer", color: reportZoom >= 180 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>+</button>
             <div style={{ width: 1, height: 20, background: theme.border, margin: "0 6px" }}/>
             <button onClick={reloadReport} title="Recargar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
               <svg width="13" height="13" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4M2 4V8h4M14 12V8h-4" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -2685,6 +2993,7 @@ function Dashboard({ user, onLogout }) {
     <div style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
       <style>{globalStyles}</style>
       {showAdmin && <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user}/>}
+      {showIncidentEditor && <IncidentEditor dark={dark} incidents={incidents} onSave={saveSharedIncidents} onClose={() => setShowIncidentEditor(false)}/>}
       {showNotif && <div onClick={() => setShowNotif(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }}/>}
       {renderActionModal()}
       {renderToast()}
@@ -2806,11 +3115,13 @@ function Dashboard({ user, onLogout }) {
           {/* Welcome Banner - only on dashboard view */}
           {activeView === "dashboard" && <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews}/>}
 
+          {activeView === "dashboard" && <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)} onOpenReport={openReport}/>}
+
           {/* KPI Cards */}
-          {activeView === "dashboard" && <KpiCards dark={dark} reports={userVisibleReports} favorites={favorites} recentViews={recentViews}/>}
+          {false && activeView === "dashboard" && <KpiCards dark={dark} reports={userVisibleReports} favorites={favorites} recentViews={recentViews}/>}
 
           {/* Executive Summary */}
-          {activeView === "dashboard" && (
+          {false && activeView === "dashboard" && (
             <div style={{ marginBottom: 24, animation: "fadeUp .5s ease-out .2s both" }}>
               <h3 style={{ fontSize: 14, fontWeight: 500, color: theme.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
                 <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: T.teal }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -2840,7 +3151,7 @@ function Dashboard({ user, onLogout }) {
           )}
 
           {/* Quick Access - Featured reports */}
-          {activeView === "dashboard" && userVisibleReports.filter(r => r.status === "live").length > 0 && (
+          {false && activeView === "dashboard" && userVisibleReports.filter(r => r.status === "live").length > 0 && (
             <div style={{ marginBottom: 24, animation: "fadeUp .5s ease-out .3s both" }}>
               <h3 style={{ fontSize: 14, fontWeight: 500, color: theme.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
                 <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: T.teal }}><path d="M13 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M6 6l2 2 2-2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>

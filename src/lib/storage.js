@@ -12,13 +12,14 @@ export function loadPortalState() {
       notifications: Array.isArray(data.notifications) ? data.notifications : [],
       requests: Array.isArray(data.requests) ? data.requests : [],
       auditEvents: Array.isArray(data.auditEvents) ? data.auditEvents : [],
+      incidents: Array.isArray(data.incidents) ? data.incidents : [],
     };
   } catch (error) {
     return {};
   }
 }
 
-export function savePortalState({ favorites, recentViews, notifications, requests, auditEvents }) {
+export function savePortalState({ favorites, recentViews, notifications, requests, auditEvents, incidents }) {
   try {
     localStorage.setItem(
       STORAGE_KEY,
@@ -28,6 +29,7 @@ export function savePortalState({ favorites, recentViews, notifications, request
         notifications: notifications || [],
         requests: requests || [],
         auditEvents: auditEvents || [],
+        incidents: incidents || [],
       })
     );
   } catch (error) {
