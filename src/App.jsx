@@ -1008,7 +1008,7 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
       background: dark
         ? `linear-gradient(135deg, ${T.teal}12, ${T.tealDark}08)`
         : `linear-gradient(135deg, ${T.tealBg}, #FFFFFF)`,
-      borderRadius: 20, padding: "28px 32px", marginBottom: 24,
+      borderRadius: 18, padding: "18px 24px", marginBottom: 16,
       border: `1px solid ${dark ? T.teal + "15" : T.teal + "12"}`,
       animation: "fadeUp .5s ease-out", position: "relative", overflow: "hidden",
     }}>
@@ -1032,13 +1032,13 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 16, marginTop: 20 }}>
-          <div style={{ padding: "8px 16px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+          <div style={{ padding: "7px 12px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 8, height: 8, borderRadius: 4, background: "#10B981", animation: "breathe 3s ease-in-out infinite" }}/>
             <span style={{ fontSize: 12, color: theme.text }}><strong>{activeReports}</strong> reportes activos</span>
           </div>
           {lastReport && (
-            <div style={{ padding: "8px 16px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ padding: "7px 12px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
               <span style={{ fontSize: 12, color: theme.textMuted }}>Último: <span style={{ color: theme.text, fontWeight: 500 }}>{lastReport.name}</span></span>
             </div>
@@ -1081,6 +1081,93 @@ function KpiCards({ dark, reports, favorites, recentViews }) {
           <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>{kpi.label}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, onOpenReport }) {
+  const theme = dark ? darkTheme : lightTheme;
+  const favoriteReports = reports.filter((report) => favorites.includes(report.id) && report.status === "live");
+  const recentLiveReports = recentReports
+    .map((recent) => reports.find((report) => report.id === recent.id))
+    .filter((report) => report && report.status === "live");
+  const liveReports = reports.filter((report) => report.status === "live");
+  const quickReports = Array.from(
+    new Map([...favoriteReports, ...recentLiveReports, ...liveReports].map((report) => [report.id, report])).values()
+  ).slice(0, 6);
+  const maintenanceReports = reports.filter((report) => report.status === "maintenance");
+  const draftReports = reports.filter((report) => report.status === "draft");
+  const openIssues = requests.filter((request) => request.type === "issue" && !["resolved", "rejected"].includes(request.status));
+  const incidents = [
+    maintenanceReports.length > 0 && {
+      id: "maintenance",
+      title: "Reportes en mantenimiento",
+      detail: `${maintenanceReports.length} reporte${maintenanceReports.length === 1 ? "" : "s"} requieren revision antes de usarse.`,
+      color: "#EF4444",
+    },
+    openIssues.length > 0 && {
+      id: "issues",
+      title: "Incidencias reportadas",
+      detail: `${openIssues.length} incidencia${openIssues.length === 1 ? "" : "s"} abiertas por usuarios.`,
+      color: "#F59E0B",
+    },
+    draftReports.length > 0 && {
+      id: "drafts",
+      title: "Reportes en preparacion",
+      detail: `${draftReports.length} reporte${draftReports.length === 1 ? "" : "s"} aun no estan publicados.`,
+      color: "#6366F1",
+    },
+  ].filter(Boolean);
+  const visibleIncidents = incidents.length ? incidents : [{
+    id: "healthy",
+    title: "Sin incidencias informadas",
+    detail: "No hay alertas operativas publicadas para los reportes activos.",
+    color: "#10B981",
+  }];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(280px, .55fr)", gap: 14, marginBottom: 18 }} className="metrics-grid">
+      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
+          <div>
+            <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 3 }}>Reportes principales</h3>
+            <p style={{ fontSize: 11, color: theme.textMuted }}>Acceso directo a los tableros mas usados y disponibles.</p>
+          </div>
+          <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, border: `1px solid ${T.teal}33`, borderRadius: 999, padding: "5px 10px", fontWeight: 700 }}>{liveReports.length} activos</span>
+        </div>
+        <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10 }}>
+          {quickReports.map((report, index) => {
+            const colors = categoryColors[report.category] || categoryColors.Comercial;
+            return (
+              <button key={report.id} onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", animation: `scaleIn .25s ease-out ${.035 * index}s both` }}>
+                <span style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg width="17" height="17" viewBox="0 0 22 22">{iconPaths[report.icon]}</svg>
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 13, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</span>
+                  <span style={{ display: "block", fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.category}</span>
+                </span>
+                <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
+        <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 12 }}>Incidencias</h3>
+        <div style={{ display: "grid", gap: 10 }}>
+          {visibleIncidents.map((incident) => (
+            <div key={incident.id} style={{ padding: 12, borderRadius: 13, background: dark ? incident.color + "10" : incident.color + "0F", border: `1px solid ${incident.color}33` }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: incident.color }}/>
+                <span style={{ fontSize: 12, color: theme.text, fontWeight: 800 }}>{incident.title}</span>
+              </div>
+              <p style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.45 }}>{incident.detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1598,6 +1685,7 @@ function Dashboard({ user, onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
+  const [reportZoom, setReportZoom] = useState(100);
   const [requestStatusFilter, setRequestStatusFilter] = useState("all");
   const [requestTypeFilter, setRequestTypeFilter] = useState("all");
   const [requestQuickFilter, setRequestQuickFilter] = useState("all");
@@ -1902,6 +1990,7 @@ function Dashboard({ user, onLogout }) {
       return;
     }
     const { pushHistory = true } = options;
+    setReportZoom(100);
     setSelectedReport(report);
     setDetailReport(null);
     if (pushHistory) {
@@ -2569,7 +2658,18 @@ function Dashboard({ user, onLogout }) {
     const isDraft = selectedReport.status === "draft";
     const lastView = recentViews.find(r => r.id === selectedReport.id);
     const fullscreenToggle = () => { const el = document.getElementById("report-embed-container"); if (el) { if (document.fullscreenElement) document.exitFullscreen(); else if (el.requestFullscreen) el.requestFullscreen(); else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen(); } };
-    const zoomReport = (level) => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.setZoom(level / 100); } catch(err) {} } };
+    const zoomReport = (level) => {
+      const nextZoom = Math.max(60, Math.min(180, level));
+      setReportZoom(nextZoom);
+      const c = document.getElementById(`pbi-container-${selectedReport.id}`);
+      const service = getLoadedPowerBiService();
+      if (c && service) {
+        try {
+          const e = service.get(c);
+          if (e) e.setZoom(nextZoom / 100);
+        } catch(err) {}
+      }
+    };
     const reloadReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.reload(); } catch(err) {} } };
     const printReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.print(); } catch(err) {} } };
 
@@ -2622,13 +2722,9 @@ function Dashboard({ user, onLogout }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ fontSize: 10, color: theme.textMuted, marginRight: 4 }}>Zoom:</span>
-            {[75, 100, 125, 150].map(z => (
-              <button key={z} onClick={() => zoomReport(z)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", fontSize: 10, color: theme.textSecondary, transition: "all .15s" }}
-                onMouseEnter={e => { e.currentTarget.style.background = T.teal; e.currentTarget.style.color = "white"; e.currentTarget.style.borderColor = T.teal; }}
-                onMouseLeave={e => { e.currentTarget.style.background = theme.bgSurface; e.currentTarget.style.color = theme.textSecondary; e.currentTarget.style.borderColor = theme.border; }}>
-                {z}%
-              </button>
-            ))}
+            <button onClick={() => zoomReport(reportZoom - 10)} disabled={reportZoom <= 60} title="Alejar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom <= 60 ? "not-allowed" : "pointer", color: reportZoom <= 60 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>-</button>
+            <span style={{ minWidth: 42, textAlign: "center", fontSize: 10, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{reportZoom}%</span>
+            <button onClick={() => zoomReport(reportZoom + 10)} disabled={reportZoom >= 180} title="Acercar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom >= 180 ? "not-allowed" : "pointer", color: reportZoom >= 180 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>+</button>
             <div style={{ width: 1, height: 20, background: theme.border, margin: "0 6px" }}/>
             <button onClick={reloadReport} title="Recargar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
               <svg width="13" height="13" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4M2 4V8h4M14 12V8h-4" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -2806,11 +2902,13 @@ function Dashboard({ user, onLogout }) {
           {/* Welcome Banner - only on dashboard view */}
           {activeView === "dashboard" && <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews}/>}
 
+          {activeView === "dashboard" && <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} onOpenReport={openReport}/>}
+
           {/* KPI Cards */}
-          {activeView === "dashboard" && <KpiCards dark={dark} reports={userVisibleReports} favorites={favorites} recentViews={recentViews}/>}
+          {false && activeView === "dashboard" && <KpiCards dark={dark} reports={userVisibleReports} favorites={favorites} recentViews={recentViews}/>}
 
           {/* Executive Summary */}
-          {activeView === "dashboard" && (
+          {false && activeView === "dashboard" && (
             <div style={{ marginBottom: 24, animation: "fadeUp .5s ease-out .2s both" }}>
               <h3 style={{ fontSize: 14, fontWeight: 500, color: theme.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
                 <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: T.teal }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -2840,7 +2938,7 @@ function Dashboard({ user, onLogout }) {
           )}
 
           {/* Quick Access - Featured reports */}
-          {activeView === "dashboard" && userVisibleReports.filter(r => r.status === "live").length > 0 && (
+          {false && activeView === "dashboard" && userVisibleReports.filter(r => r.status === "live").length > 0 && (
             <div style={{ marginBottom: 24, animation: "fadeUp .5s ease-out .3s both" }}>
               <h3 style={{ fontSize: 14, fontWeight: 500, color: theme.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
                 <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: T.teal }}><path d="M13 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M6 6l2 2 2-2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
