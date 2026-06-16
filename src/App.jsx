@@ -1230,13 +1230,14 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
     ? drafts.map((item) => item.id === editingId ? incident : item)
     : [incident, ...drafts].slice(0, 40);
 
-  const upsertIncident = () => {
+  const publishCurrentIncident = () => {
     const nextIncident = buildIncidentFromForm();
     if (!nextIncident) return;
 
     const nextDrafts = mergeIncidentDraft(nextIncident);
     setDrafts(nextDrafts);
     reset();
+    onSave(nextDrafts);
   };
 
   const saveIncidents = () => {
@@ -1297,7 +1298,7 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
             </label>
             <div style={{ display: "flex", gap: 8 }}>
               {editingId && <button onClick={reset} style={{ padding: "9px 12px", borderRadius: 11, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 12 }}>Cancelar edicion</button>}
-              <button onClick={upsertIncident} style={{ padding: "9px 14px", borderRadius: 11, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 800 }}>{editingId ? "Actualizar" : "Agregar a lista"}</button>
+              <button onClick={publishCurrentIncident} style={{ padding: "9px 14px", borderRadius: 11, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 800 }}>{editingId ? "Actualizar y publicar" : "Publicar aviso"}</button>
             </div>
           </div>
           {error && <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: dark ? "#7F1D1D22" : "#FEF2F2", color: dark ? "#FCA5A5" : "#991B1B", fontSize: 12 }}>{error}</div>}
