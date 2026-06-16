@@ -1207,15 +1207,15 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
     setError("");
   };
 
-  const upsertIncident = () => {
+  const buildIncidentFromForm = () => {
     const cleanTitle = form.title.trim();
     const cleanDetail = form.detail.trim();
     if (!cleanTitle || !cleanDetail) {
       setError("Titulo y detalle son obligatorios.");
-      return;
+      return null;
     }
 
-    const nextIncident = {
+    return {
       id: editingId || `incident-${Date.now()}`,
       title: cleanTitle.slice(0, 120),
       detail: cleanDetail.slice(0, 320),
@@ -1224,12 +1224,35 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
       createdAt: drafts.find((item) => item.id === editingId)?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const nextDrafts = editingId
-      ? drafts.map((item) => item.id === editingId ? nextIncident : item)
-      : [nextIncident, ...drafts].slice(0, 40);
+  };
 
+  const mergeIncidentDraft = (incident) => editingId
+    ? drafts.map((item) => item.id === editingId ? incident : item)
+    : [incident, ...drafts].slice(0, 40);
+
+  const upsertIncident = () => {
+    const nextIncident = buildIncidentFromForm();
+    if (!nextIncident) return;
+
+    const nextDrafts = mergeIncidentDraft(nextIncident);
     setDrafts(nextDrafts);
     reset();
+  };
+
+  const saveIncidents = () => {
+    const hasPendingForm = form.title.trim() || form.detail.trim();
+    if (!hasPendingForm) {
+      onSave(drafts);
+      return;
+    }
+
+    const nextIncident = buildIncidentFromForm();
+    if (!nextIncident) return;
+
+    const nextDrafts = mergeIncidentDraft(nextIncident);
+    setDrafts(nextDrafts);
+    reset();
+    onSave(nextDrafts);
   };
 
   const editIncident = (incident) => {
@@ -1274,14 +1297,14 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
             </label>
             <div style={{ display: "flex", gap: 8 }}>
               {editingId && <button onClick={reset} style={{ padding: "9px 12px", borderRadius: 11, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 12 }}>Cancelar edicion</button>}
-              <button onClick={upsertIncident} style={{ padding: "9px 14px", borderRadius: 11, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 800 }}>{editingId ? "Actualizar" : "Agregar aviso"}</button>
+              <button onClick={upsertIncident} style={{ padding: "9px 14px", borderRadius: 11, border: `1px solid ${T.teal}55`, background: dark ? T.teal + "14" : T.tealBg, color: T.teal, cursor: "pointer", fontSize: 12, fontWeight: 800 }}>{editingId ? "Actualizar" : "Agregar a lista"}</button>
             </div>
           </div>
           {error && <div style={{ marginBottom: 14, padding: 10, borderRadius: 10, background: dark ? "#7F1D1D22" : "#FEF2F2", color: dark ? "#FCA5A5" : "#991B1B", fontSize: 12 }}>{error}</div>}
 
           <div style={{ display: "grid", gap: 9 }}>
             {drafts.length === 0 ? (
-              <div style={{ padding: 28, borderRadius: 14, border: `1px dashed ${theme.border}`, color: theme.textMuted, textAlign: "center", fontSize: 12 }}>No hay avisos manuales publicados.</div>
+              <div style={{ padding: 28, borderRadius: 14, border: `1px dashed ${theme.border}`, color: theme.textMuted, textAlign: "center", fontSize: 12 }}>Escribi un aviso y guardalo para publicarlo en el Home.</div>
             ) : drafts.map((incident) => {
               const severity = severityOptions.find((option) => option.value === incident.severity) || severityOptions[0];
               return (
@@ -1306,7 +1329,7 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
 
         <div style={{ padding: "16px 22px", borderTop: `1px solid ${theme.border}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
           <button onClick={onClose} style={{ padding: "10px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer", fontSize: 13 }}>Cerrar</button>
-          <button onClick={() => onSave(drafts)} style={{ padding: "10px 18px", borderRadius: 12, border: "none", background: T.teal, color: "white", cursor: "pointer", fontSize: 13, fontWeight: 800 }}>Guardar incidencias</button>
+          <button onClick={saveIncidents} style={{ padding: "10px 18px", borderRadius: 12, border: "none", background: T.teal, color: "white", cursor: "pointer", fontSize: 13, fontWeight: 800 }}>Guardar y publicar</button>
         </div>
       </div>
     </div>
