@@ -83,6 +83,9 @@ const T = {
 };
 const darkTheme = { bg: "#0F1117", bgCard: "#181B23", bgSurface: "#1E222D", bgHover: "#252A36", border: "#2A2F3C", borderLight: "#353B4A", text: "#E8ECF4", textSecondary: "#A7B0C0", textMuted: "#6B7288" };
 const lightTheme = { bg: "#F6F8FC", bgCard: "#FFFFFF", bgSurface: "#F4F7FB", bgHover: "#EEF3F9", border: "#E3E8F0", borderLight: "#EDF2F7", text: "#111827", textSecondary: "#667085", textMuted: "#98A2B3" };
+const REPORTS_REFRESH_MS = 10 * 60 * 1000;
+const SHARED_STATE_REFRESH_MS = 5 * 60 * 1000;
+const AUDIT_EVENT_DEDUPE_MS = 10 * 60 * 1000;
 
 const categoryColors = {
   Abastecimiento: { bg: "#FFF4E8", accent: "#F97316", darkBg: "#F9731620", darkText: "#FDBA74" },
@@ -1971,6 +1974,13 @@ function Dashboard({ user, onLogout }) {
   const historyInitializedRef = useRef(false);
   const auditEventsRef = useRef([]);
   const incidentsRef = useRef([]);
+  const auditPushDedupeRef = useRef({});
+  const sharedSyncRef = useRef({
+    reports: 0,
+    requests: 0,
+    incidents: 0,
+    audit: 0,
+  });
 
   const buildUiState = useCallback((overrides = {}) => ({
     app: "datareports",
@@ -2126,7 +2136,22 @@ function Dashboard({ user, onLogout }) {
     } catch (e) {}
   }, []);
 
-  const fetchSharedReports = useCallback(async () => {
+  const shouldSyncShared = useCallback((key, ttl, force = false) => {
+    if (force) {
+      sharedSyncRef.current[key] = Date.now();
+      return true;
+    }
+
+    const lastSync = sharedSyncRef.current[key] || 0;
+    if (Date.now() - lastSync < ttl) return false;
+
+    sharedSyncRef.current[key] = Date.now();
+    return true;
+  }, []);
+
+  const fetchSharedReports = useCallback(async (options = {}) => {
+    if (!shouldSyncShared("reports", REPORTS_REFRESH_MS, options.force)) return;
+
     try {
       const data = await fetchReportsCatalog({ getAccessToken });
       if (!Array.isArray(data.reports)) throw new Error("invalid-shared-reports-response");
@@ -2142,7 +2167,7 @@ function Dashboard({ user, onLogout }) {
       setReportSyncStatus("local");
       setReportSyncMessage("Catálogo local: pendiente conectar bi-reports");
     }
-  }, [user?.email, favorites, recentViews, notifications, requests, saveAll]);
+  }, [favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
 
   // Cargar catálogo central al iniciar sesión y mantenerlo actualizado para todos los usuarios.
   useEffect(() => {
@@ -2158,14 +2183,9 @@ function Dashboard({ user, onLogout }) {
       if (document.visibilityState === "visible") fetchSharedReports();
     };
 
-    const interval = setInterval(() => {
-      fetchSharedReports();
-    }, 60000);
-
     document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
-      clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [loaded, user?.email, fetchSharedReports]);
@@ -2340,8 +2360,9 @@ function Dashboard({ user, onLogout }) {
     setTimeout(() => setToast(null), 3200);
   };
 
-  const fetchSharedAuditEvents = useCallback(async () => {
+  const fetchSharedAuditEvents = useCallback(async (options = {}) => {
     if (!isAdmin(user?.email)) return;
+    if (!shouldSyncShared("audit", SHARED_STATE_REFRESH_MS, options.force)) return;
 
     try {
       const data = await fetchBiAuditEvents({ getAccessToken });
@@ -2363,7 +2384,7 @@ function Dashboard({ user, onLogout }) {
       setAuditSyncStatus("local");
       setAuditSyncMessage("Auditoria local");
     }
-  }, [user?.email, reports, favorites, recentViews, notifications, requests, saveAll]);
+  }, [user?.email, reports, favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
 
   const pushSharedAuditEvent = useCallback(async (event) => {
     try {
@@ -2378,7 +2399,23 @@ function Dashboard({ user, onLogout }) {
     }
   }, []);
 
-  const fetchSharedIncidents = useCallback(async () => {
+  const shouldPushAuditEvent = useCallback((action, subject = {}) => {
+    if (action !== "report_opened") return true;
+
+    const subjectKey = subject.id || subject.name || "unknown";
+    const dedupeKey = `${action}:${subject.type || "subject"}:${subjectKey}:${user?.email || "anonymous"}`;
+    const lastPush = auditPushDedupeRef.current[dedupeKey] || 0;
+    const now = Date.now();
+
+    if (now - lastPush < AUDIT_EVENT_DEDUPE_MS) return false;
+
+    auditPushDedupeRef.current[dedupeKey] = now;
+    return true;
+  }, [user?.email]);
+
+  const fetchSharedIncidents = useCallback(async (options = {}) => {
+    if (!shouldSyncShared("incidents", SHARED_STATE_REFRESH_MS, options.force)) return;
+
     try {
       const data = await fetchBiIncidents({ getAccessToken });
       if (Array.isArray(data.incidents)) {
@@ -2389,7 +2426,7 @@ function Dashboard({ user, onLogout }) {
     } catch (e) {
       // Local incident fallback keeps the Home usable if shared storage is unavailable.
     }
-  }, [reports, favorites, recentViews, notifications, requests, saveAll]);
+  }, [reports, favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
 
   const saveSharedIncidents = async (nextIncidents, options = {}) => {
     const keepOpen = options.keepOpen === true;
@@ -2425,11 +2462,15 @@ function Dashboard({ user, onLogout }) {
     auditEventsRef.current = nextEvents;
     setAuditEvents(nextEvents);
     saveAll(reports, favorites, recentViews, notifications, requests, nextEvents);
-    pushSharedAuditEvent(event);
+    if (shouldPushAuditEvent(action, subject)) {
+      pushSharedAuditEvent(event);
+    }
     return nextEvents;
-  }, [user, reports, favorites, recentViews, notifications, requests, saveAll, pushSharedAuditEvent]);
+  }, [user, reports, favorites, recentViews, notifications, requests, saveAll, pushSharedAuditEvent, shouldPushAuditEvent]);
 
-  const fetchSharedRequests = useCallback(async () => {
+  const fetchSharedRequests = useCallback(async (options = {}) => {
+    if (!shouldSyncShared("requests", SHARED_STATE_REFRESH_MS, options.force)) return;
+
     try {
       const data = await fetchBiRequests({ getAccessToken });
       if (Array.isArray(data.requests)) {
@@ -2442,7 +2483,7 @@ function Dashboard({ user, onLogout }) {
       setRequestSyncStatus("local");
       setRequestSyncMessage("Modo local: pendiente conectar función Netlify");
     }
-  }, [user?.email, reports, favorites, recentViews, notifications, saveAll]);
+  }, [user?.email, reports, favorites, recentViews, notifications, saveAll, shouldSyncShared]);
 
   useEffect(() => {
     if (loaded && user?.email) fetchSharedRequests();
@@ -2453,8 +2494,8 @@ function Dashboard({ user, onLogout }) {
   }, [loaded, user?.email, fetchSharedIncidents]);
 
   useEffect(() => {
-    if (loaded && isAdmin(user?.email)) fetchSharedAuditEvents();
-  }, [loaded, user?.email, fetchSharedAuditEvents]);
+    if (loaded && activeView === "audit" && isAdmin(user?.email)) fetchSharedAuditEvents();
+  }, [loaded, activeView, user?.email, fetchSharedAuditEvents]);
 
   useEffect(() => {
     setRequestAdminNote(selectedRequest?.adminNote || "");
@@ -3298,7 +3339,7 @@ function Dashboard({ user, onLogout }) {
           {activeView === "biops" && isAdmin(user.email) && <BiOpsPanel dark={dark} reports={reports} requests={requests} onOpenRequests={openRequestsQueue}/>}
 
           {/* Audit Panel - admin only */}
-          {activeView === "audit" && isAdmin(user.email) && <AuditPanel dark={dark} events={auditEvents} reports={reports} requests={requests} syncStatus={auditSyncStatus} syncMessage={auditSyncMessage} onRefresh={fetchSharedAuditEvents} onOpenReport={openReport} onOpenRequest={openAuditedRequest}/>}
+          {activeView === "audit" && isAdmin(user.email) && <AuditPanel dark={dark} events={auditEvents} reports={reports} requests={requests} syncStatus={auditSyncStatus} syncMessage={auditSyncMessage} onRefresh={() => fetchSharedAuditEvents({ force: true })} onOpenReport={openReport} onOpenRequest={openAuditedRequest}/>}
 
           {/* Requests module */}
           {activeView === "requests" && renderRequestsPanel()}

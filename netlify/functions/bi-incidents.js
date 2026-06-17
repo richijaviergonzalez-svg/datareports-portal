@@ -14,10 +14,15 @@ const headers = {
   Vary: "Authorization",
 };
 
-function json(statusCode, body) {
+const readHeaders = {
+  ...headers,
+  "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
+};
+
+function json(statusCode, body, responseHeaders = headers) {
   return {
     statusCode,
-    headers,
+    headers: responseHeaders,
     body: JSON.stringify(body),
   };
 }
@@ -132,7 +137,7 @@ exports.handler = async (event) => {
         source: "netlify-blobs",
         isAdmin: auth.isAdmin,
         incidents: auth.isAdmin ? normalized : normalized.filter((incident) => incident.active),
-      });
+      }, readHeaders);
     }
 
     if (method === "PUT") {

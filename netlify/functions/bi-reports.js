@@ -11,10 +11,15 @@ const headers = {
   Vary: "Authorization",
 };
 
-function json(statusCode, body) {
+const readHeaders = {
+  ...headers,
+  "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
+};
+
+function json(statusCode, body, responseHeaders = headers) {
   return {
     statusCode,
-    headers,
+    headers: responseHeaders,
     body: JSON.stringify(body),
   };
 }
@@ -242,7 +247,7 @@ exports.handler = async (event) => {
         totalReports: normalized.length,
         visibleReports: visibleReports.length,
         reports: visibleReports,
-      });
+      }, readHeaders);
     }
 
     if (!isAdmin) {

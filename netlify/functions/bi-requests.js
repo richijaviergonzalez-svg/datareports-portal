@@ -23,6 +23,11 @@ const headers = {
   Vary: "Authorization",
 };
 
+const readHeaders = {
+  ...headers,
+  "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
+};
+
 const REQUEST_STATUS_LABELS = {
   new: "Nuevo",
   analysis: "En análisis",
@@ -38,10 +43,10 @@ const REQUEST_PRIORITY_LABELS = {
   critica: "Crítica",
 };
 
-function json(statusCode, body) {
+function json(statusCode, body, responseHeaders = headers) {
   return {
     statusCode,
-    headers,
+    headers: responseHeaders,
     body: JSON.stringify(body),
   };
 }
@@ -303,7 +308,7 @@ exports.handler = async (event) => {
         totalRequests: normalized.length,
         visibleRequests: visibleRequests.length,
         requests: visibleRequests,
-      });
+      }, readHeaders);
     }
 
     if (method === "POST") {
