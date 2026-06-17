@@ -14,10 +14,15 @@ const headers = {
   Vary: "Authorization",
 };
 
-function json(statusCode, body) {
+const readHeaders = {
+  ...headers,
+  "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
+};
+
+function json(statusCode, body, responseHeaders = headers) {
   return {
     statusCode,
-    headers,
+    headers: responseHeaders,
     body: JSON.stringify(body),
   };
 }
@@ -150,7 +155,7 @@ exports.handler = async (event) => {
         source: "netlify-blobs",
         totalEvents: normalized.length,
         events: normalized.slice(0, MAX_AUDIT_EVENTS),
-      });
+      }, readHeaders);
     }
 
     if (method === "POST") {
