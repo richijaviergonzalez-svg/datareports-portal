@@ -1010,14 +1010,14 @@ function WelcomeBanner({ user, dark, reports, recentReports, embedded = false })
       background: dark
         ? `linear-gradient(135deg, ${T.teal}12, ${T.tealDark}08)`
         : `linear-gradient(135deg, ${T.tealBg}, #FFFFFF)`,
-      borderRadius: 16, padding: "18px 22px", marginBottom: embedded ? 0 : 12, minHeight: embedded ? 352 : "auto", height: embedded ? "100%" : "auto",
+      borderRadius: 16, padding: "18px 22px", marginBottom: embedded ? 0 : 12,
       border: `1px solid ${dark ? T.teal + "15" : T.teal + "12"}`,
       animation: "fadeUp .5s ease-out", position: "relative", overflow: "hidden",
     }}>
       {/* Compact accent strip */}
       <div style={{ position: "absolute", right: 0, top: 0, width: 120, height: "100%", background: T.teal + "04" }}/>
 
-      <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 28 }}>
+      <div style={{ position: "relative", zIndex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <div>
             <p style={{ fontSize: 12, color: T.teal, fontWeight: 600, marginBottom: 2 }}>{greeting}</p>
@@ -1033,7 +1033,7 @@ function WelcomeBanner({ user, dark, reports, recentReports, embedded = false })
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        {!embedded && <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
           <div style={{ padding: "7px 12px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 8, height: 8, borderRadius: 4, background: "#10B981", animation: "breathe 3s ease-in-out infinite" }}/>
             <span style={{ fontSize: 12, color: theme.text }}><strong>{activeReports}</strong> reportes activos</span>
@@ -1044,7 +1044,7 @@ function WelcomeBanner({ user, dark, reports, recentReports, embedded = false })
               <span style={{ fontSize: 12, color: theme.textMuted }}>Último: <span style={{ color: theme.text, fontWeight: 500 }}>{lastReport.name}</span></span>
             </div>
           )}
-        </div>
+        </div>}
       </div>
     </div>
   );
@@ -1242,7 +1242,7 @@ function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], 
   );
 }
 
-function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, manualIncidents = [], isUserAdmin = false, onEditIncidents, onOpenReport }) {
+function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, manualIncidents = [], isUserAdmin = false, onEditIncidents, onOpenReport, embedded = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const favoriteReports = reports.filter((report) => favorites.includes(report.id) && report.status === "live");
   const recentLiveReports = recentReports
@@ -1254,7 +1254,7 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
   ).slice(0, 8);
 
   return (
-    <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 18, marginBottom: 18 }}>
+    <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 18, marginBottom: embedded ? 0 : 18, height: embedded ? "100%" : "auto", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
         <div>
           <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 3 }}>Reportes principales</h3>
@@ -1262,7 +1262,7 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
         </div>
         <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, border: `1px solid ${T.teal}33`, borderRadius: 999, padding: "5px 10px", fontWeight: 700 }}>{liveReports.length} activos</span>
       </div>
-      <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 10 }}>
+      <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, alignContent: "start" }}>
         {quickReports.map((report, index) => {
           const colors = categoryColors[report.category] || categoryColors.Comercial;
           return (
@@ -3213,13 +3213,14 @@ function Dashboard({ user, onLogout }) {
         <div style={{ padding: "24px 28px" }}>
           {/* Welcome and incident calendar - only on dashboard view */}
           {activeView === "dashboard" && (
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 14, alignItems: "stretch" }} className="metrics-grid">
-              <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews} embedded/>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "stretch" }} className="metrics-grid">
+              <div style={{ display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 14 }}>
+                <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews} embedded/>
+                <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)} onOpenReport={openReport} embedded/>
+              </div>
               <IncidentCalendarPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)}/>
             </div>
           )}
-
-          {activeView === "dashboard" && <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)} onOpenReport={openReport}/>}
 
           {/* KPI Cards */}
           {false && activeView === "dashboard" && <KpiCards dark={dark} reports={userVisibleReports} favorites={favorites} recentViews={recentViews}/>}
