@@ -995,7 +995,7 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
 // ========================
 // WELCOME BANNER
 // ========================
-function WelcomeBanner({ user, dark, reports, recentReports }) {
+function WelcomeBanner({ user, dark, reports, recentReports, embedded = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const [time, setTime] = useState(new Date());
   useEffect(() => { const i = setInterval(() => setTime(new Date()), 60000); return () => clearInterval(i); }, []);
@@ -1010,14 +1010,14 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
       background: dark
         ? `linear-gradient(135deg, ${T.teal}12, ${T.tealDark}08)`
         : `linear-gradient(135deg, ${T.tealBg}, #FFFFFF)`,
-      borderRadius: 16, padding: "12px 22px", marginBottom: 12,
+      borderRadius: 16, padding: "18px 22px", marginBottom: embedded ? 0 : 12, minHeight: embedded ? 352 : "auto", height: embedded ? "100%" : "auto",
       border: `1px solid ${dark ? T.teal + "15" : T.teal + "12"}`,
       animation: "fadeUp .5s ease-out", position: "relative", overflow: "hidden",
     }}>
       {/* Compact accent strip */}
       <div style={{ position: "absolute", right: 0, top: 0, width: 120, height: "100%", background: T.teal + "04" }}/>
 
-      <div style={{ position: "relative", zIndex: 1 }}>
+      <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 28 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <div>
             <p style={{ fontSize: 12, color: T.teal, fontWeight: 600, marginBottom: 2 }}>{greeting}</p>
@@ -1120,18 +1120,10 @@ function buildCalendarDays(monthDate) {
   });
 }
 
-function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, manualIncidents = [], isUserAdmin = false, onEditIncidents, onOpenReport }) {
+function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], isUserAdmin = false, onEditIncidents }) {
   const theme = dark ? darkTheme : lightTheme;
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDateKey, setSelectedDateKey] = useState(null);
-  const favoriteReports = reports.filter((report) => favorites.includes(report.id) && report.status === "live");
-  const recentLiveReports = recentReports
-    .map((recent) => reports.find((report) => report.id === recent.id))
-    .filter((report) => report && report.status === "live");
-  const liveReports = reports.filter((report) => report.status === "live");
-  const quickReports = Array.from(
-    new Map([...favoriteReports, ...recentLiveReports, ...liveReports].map((report) => [report.id, report])).values()
-  ).slice(0, 8);
   const maintenanceReports = reports.filter((report) => report.status === "maintenance");
   const draftReports = reports.filter((report) => report.status === "draft");
   const openIssues = requests.filter((request) => request.type === "issue" && !["resolved", "rejected"].includes(request.status));
@@ -1187,96 +1179,109 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
   const selectedDateLabel = new Date(`${activeDateKey}T12:00:00`).toLocaleDateString("es-PY", { day: "2-digit", month: "short" });
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "start" }} className="metrics-grid">
-      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18, alignSelf: "start" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
-          <div>
-            <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 3 }}>Reportes principales</h3>
-            <p style={{ fontSize: 11, color: theme.textMuted }}>Acceso directo a los tableros mas usados y disponibles.</p>
-          </div>
-          <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, border: `1px solid ${T.teal}33`, borderRadius: 999, padding: "5px 10px", fontWeight: 700 }}>{liveReports.length} activos</span>
+    <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 18, height: "100%" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <div>
+          <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700 }}>Incidencias</h3>
+          <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>{incidentEvents.length ? `${incidentEvents.length} aviso${incidentEvents.length === 1 ? "" : "s"} en calendario` : "Sin alertas publicadas"}</p>
         </div>
-        <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
-          {quickReports.map((report, index) => {
-            const colors = categoryColors[report.category] || categoryColors.Comercial;
+        {isUserAdmin && (
+          <button onClick={onEditIncidents} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 10, padding: "6px 9px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editar</button>
+        )}
+      </div>
+
+      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 14, padding: 10, background: theme.bgSurface, marginBottom: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer" }}>&lt;</button>
+          <span style={{ fontSize: 12, fontWeight: 800, color: theme.text }}>
+            {calendarMonth.toLocaleDateString("es-PY", { month: "long", year: "numeric" })}
+          </span>
+          <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer" }}>&gt;</button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+          {["D", "L", "M", "M", "J", "V", "S"].map((day, index) => (
+            <span key={`${day}-${index}`} style={{ textAlign: "center", fontSize: 9, color: theme.textMuted, fontWeight: 800 }}>{day}</span>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+          {calendarDays.map((day) => {
+            const dayIncidents = incidentsByDate[day.key] || [];
+            const isSelected = activeDateKey === day.key;
             return (
-              <button key={report.id} onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", animation: `scaleIn .25s ease-out ${.035 * index}s both` }}>
-                <span style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <svg width="17" height="17" viewBox="0 0 22 22">{iconPaths[report.icon]}</svg>
+              <button key={day.key} onClick={() => setSelectedDateKey(day.key)} style={{ minHeight: 34, borderRadius: 9, border: `1px solid ${isSelected ? T.teal : "transparent"}`, background: isSelected ? (dark ? T.teal + "18" : T.tealBg) : "transparent", color: day.isCurrentMonth ? theme.text : theme.textMuted, cursor: "pointer", opacity: day.isCurrentMonth ? 1 : .45, padding: 3 }}>
+                <span style={{ display: "block", fontSize: 11, fontWeight: day.isToday ? 900 : 700 }}>{day.label}</span>
+                <span style={{ display: "flex", justifyContent: "center", gap: 2, minHeight: 5, marginTop: 2 }}>
+                  {dayIncidents.slice(0, 3).map((incident) => (
+                    <span key={incident.id} style={{ width: 5, height: 5, borderRadius: 999, background: incident.color }}/>
+                  ))}
                 </span>
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 13, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</span>
-                  <span style={{ display: "block", fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.category}</span>
-                </span>
-                <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </button>
             );
           })}
         </div>
       </div>
 
-      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
-          <div>
-            <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700 }}>Incidencias</h3>
-            <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>{incidentEvents.length ? `${incidentEvents.length} aviso${incidentEvents.length === 1 ? "" : "s"} en calendario` : "Sin alertas publicadas"}</p>
+      <div style={{ display: "grid", gap: 9 }}>
+        {incidentEvents.length > 0 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, color: theme.textMuted }}>Seleccionado: <strong style={{ color: theme.text }}>{selectedDateLabel}</strong></span>
+            {activeDateIncidents.length === 0 && <span style={{ fontSize: 10, color: theme.textMuted }}>Mostrando recientes</span>}
           </div>
-          {isUserAdmin && (
-            <button onClick={onEditIncidents} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 10, padding: "6px 9px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editar</button>
-          )}
-        </div>
-
-        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 14, padding: 10, background: theme.bgSurface, marginBottom: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer" }}>&lt;</button>
-            <span style={{ fontSize: 12, fontWeight: 800, color: theme.text }}>
-              {calendarMonth.toLocaleDateString("es-PY", { month: "long", year: "numeric" })}
-            </span>
-            <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer" }}>&gt;</button>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
-            {["D", "L", "M", "M", "J", "V", "S"].map((day, index) => (
-              <span key={`${day}-${index}`} style={{ textAlign: "center", fontSize: 9, color: theme.textMuted, fontWeight: 800 }}>{day}</span>
-            ))}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-            {calendarDays.map((day) => {
-              const dayIncidents = incidentsByDate[day.key] || [];
-              const isSelected = activeDateKey === day.key;
-              return (
-                <button key={day.key} onClick={() => setSelectedDateKey(day.key)} style={{ minHeight: 34, borderRadius: 9, border: `1px solid ${isSelected ? T.teal : "transparent"}`, background: isSelected ? (dark ? T.teal + "18" : T.tealBg) : "transparent", color: day.isCurrentMonth ? theme.text : theme.textMuted, cursor: "pointer", opacity: day.isCurrentMonth ? 1 : .45, padding: 3 }}>
-                  <span style={{ display: "block", fontSize: 11, fontWeight: day.isToday ? 900 : 700 }}>{day.label}</span>
-                  <span style={{ display: "flex", justifyContent: "center", gap: 2, minHeight: 5, marginTop: 2 }}>
-                    {dayIncidents.slice(0, 3).map((incident) => (
-                      <span key={incident.id} style={{ width: 5, height: 5, borderRadius: 999, background: incident.color }}/>
-                    ))}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gap: 9 }}>
-          {incidentEvents.length > 0 && (
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, color: theme.textMuted }}>Seleccionado: <strong style={{ color: theme.text }}>{selectedDateLabel}</strong></span>
-              {activeDateIncidents.length === 0 && <span style={{ fontSize: 10, color: theme.textMuted }}>Mostrando recientes</span>}
+        )}
+        {visibleIncidents.map((incident) => (
+          <div key={incident.id} style={{ padding: 12, borderRadius: 13, background: dark ? incident.color + "10" : incident.color + "0F", border: `1px solid ${incident.color}33` }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: incident.color }}/>
+              <span style={{ fontSize: 12, color: theme.text, fontWeight: 800 }}>{incident.title}</span>
             </div>
-          )}
-          {visibleIncidents.map((incident) => (
-            <div key={incident.id} style={{ padding: 12, borderRadius: 13, background: dark ? incident.color + "10" : incident.color + "0F", border: `1px solid ${incident.color}33` }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: incident.color }}/>
-                <span style={{ fontSize: 12, color: theme.text, fontWeight: 800 }}>{incident.title}</span>
-              </div>
-              <p style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.45 }}>{incident.detail}</p>
-            </div>
-          ))}
-        </div>
+            <p style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.45 }}>{incident.detail}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
+}
+
+function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, manualIncidents = [], isUserAdmin = false, onEditIncidents, onOpenReport }) {
+  const theme = dark ? darkTheme : lightTheme;
+  const favoriteReports = reports.filter((report) => favorites.includes(report.id) && report.status === "live");
+  const recentLiveReports = recentReports
+    .map((recent) => reports.find((report) => report.id === recent.id))
+    .filter((report) => report && report.status === "live");
+  const liveReports = reports.filter((report) => report.status === "live");
+  const quickReports = Array.from(
+    new Map([...favoriteReports, ...recentLiveReports, ...liveReports].map((report) => [report.id, report])).values()
+  ).slice(0, 8);
+
+  return (
+    <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 18, marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
+        <div>
+          <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 3 }}>Reportes principales</h3>
+          <p style={{ fontSize: 11, color: theme.textMuted }}>Acceso directo a los tableros mas usados y disponibles.</p>
+        </div>
+        <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, border: `1px solid ${T.teal}33`, borderRadius: 999, padding: "5px 10px", fontWeight: 700 }}>{liveReports.length} activos</span>
+      </div>
+      <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 10 }}>
+        {quickReports.map((report, index) => {
+          const colors = categoryColors[report.category] || categoryColors.Comercial;
+          return (
+            <button key={report.id} onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", animation: `scaleIn .25s ease-out ${.035 * index}s both` }}>
+              <span style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg width="17" height="17" viewBox="0 0 22 22">{iconPaths[report.icon]}</svg>
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: 13, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</span>
+                <span style={{ display: "block", fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.category}</span>
+              </span>
+              <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
 }
 
 function IncidentEditor({ dark, incidents, onSave, onClose }) {
@@ -3206,8 +3211,13 @@ function Dashboard({ user, onLogout }) {
         </div>
 
         <div style={{ padding: "24px 28px" }}>
-          {/* Welcome Banner - only on dashboard view */}
-          {activeView === "dashboard" && <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews}/>}
+          {/* Welcome and incident calendar - only on dashboard view */}
+          {activeView === "dashboard" && (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 14, alignItems: "stretch" }} className="metrics-grid">
+              <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews} embedded/>
+              <IncidentCalendarPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)}/>
+            </div>
+          )}
 
           {activeView === "dashboard" && <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)} onOpenReport={openReport}/>}
 
