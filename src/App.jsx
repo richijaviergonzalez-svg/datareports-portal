@@ -995,7 +995,7 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
 // ========================
 // WELCOME BANNER
 // ========================
-function WelcomeBanner({ user, dark, reports, recentReports }) {
+function WelcomeBanner({ user, dark, reports, recentReports, embedded = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const [time, setTime] = useState(new Date());
   useEffect(() => { const i = setInterval(() => setTime(new Date()), 60000); return () => clearInterval(i); }, []);
@@ -1010,20 +1010,19 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
       background: dark
         ? `linear-gradient(135deg, ${T.teal}12, ${T.tealDark}08)`
         : `linear-gradient(135deg, ${T.tealBg}, #FFFFFF)`,
-      borderRadius: 18, padding: "18px 24px", marginBottom: 16,
+      borderRadius: 16, padding: "18px 22px", marginBottom: embedded ? 0 : 12,
       border: `1px solid ${dark ? T.teal + "15" : T.teal + "12"}`,
       animation: "fadeUp .5s ease-out", position: "relative", overflow: "hidden",
     }}>
-      {/* Decorative circles */}
-      <div style={{ position: "absolute", right: -20, top: -20, width: 140, height: 140, borderRadius: "50%", background: T.teal + "06" }}/>
-      <div style={{ position: "absolute", right: 60, bottom: -30, width: 100, height: 100, borderRadius: "50%", background: T.teal + "04" }}/>
+      {/* Compact accent strip */}
+      <div style={{ position: "absolute", right: 0, top: 0, width: 120, height: "100%", background: T.teal + "04" }}/>
 
       <div style={{ position: "relative", zIndex: 1 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <div>
-            <p style={{ fontSize: 13, color: T.teal, fontWeight: 500, marginBottom: 4 }}>{greeting}</p>
-            <h1 style={{ fontSize: 26, fontWeight: 500, color: theme.text, letterSpacing: "-0.5px" }}>{user.name.split(" ")[0]}</h1>
-            <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 6 }}>
+            <p style={{ fontSize: 12, color: T.teal, fontWeight: 600, marginBottom: 2 }}>{greeting}</p>
+            <h1 style={{ fontSize: 22, fontWeight: 600, color: theme.text }}>{user.name.split(" ")[0]}</h1>
+            <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 3 }}>
               {time.toLocaleDateString("es-PY", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
             </p>
           </div>
@@ -1034,7 +1033,7 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        {!embedded && <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
           <div style={{ padding: "7px 12px", borderRadius: 12, background: dark ? theme.bgSurface : "white", border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ width: 8, height: 8, borderRadius: 4, background: "#10B981", animation: "breathe 3s ease-in-out infinite" }}/>
             <span style={{ fontSize: 12, color: theme.text }}><strong>{activeReports}</strong> reportes activos</span>
@@ -1045,7 +1044,7 @@ function WelcomeBanner({ user, dark, reports, recentReports }) {
               <span style={{ fontSize: 12, color: theme.textMuted }}>Último: <span style={{ color: theme.text, fontWeight: 500 }}>{lastReport.name}</span></span>
             </div>
           )}
-        </div>
+        </div>}
       </div>
     </div>
   );
@@ -1087,16 +1086,44 @@ function KpiCards({ dark, reports, favorites, recentViews }) {
   );
 }
 
-function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, manualIncidents = [], isUserAdmin = false, onEditIncidents, onOpenReport }) {
+function getIncidentColor(severity) {
+  if (severity === "critical") return "#EF4444";
+  if (severity === "warning") return "#F59E0B";
+  if (severity === "success") return "#10B981";
+  return "#3B82F6";
+}
+
+function toDateKey(value) {
+  const date = value ? new Date(value) : new Date();
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  const year = safeDate.getFullYear();
+  const month = String(safeDate.getMonth() + 1).padStart(2, "0");
+  const day = String(safeDate.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildCalendarDays(monthDate) {
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const first = new Date(year, month, 1);
+  const start = new Date(year, month, 1 - first.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return {
+      key: toDateKey(date),
+      label: date.getDate(),
+      isCurrentMonth: date.getMonth() === month,
+      isToday: toDateKey(date) === toDateKey(new Date()),
+    };
+  });
+}
+
+function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], isUserAdmin = false, onEditIncidents }) {
   const theme = dark ? darkTheme : lightTheme;
-  const favoriteReports = reports.filter((report) => favorites.includes(report.id) && report.status === "live");
-  const recentLiveReports = recentReports
-    .map((recent) => reports.find((report) => report.id === recent.id))
-    .filter((report) => report && report.status === "live");
-  const liveReports = reports.filter((report) => report.status === "live");
-  const quickReports = Array.from(
-    new Map([...favoriteReports, ...recentLiveReports, ...liveReports].map((report) => [report.id, report])).values()
-  ).slice(0, 6);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [selectedDateKey, setSelectedDateKey] = useState(null);
   const maintenanceReports = reports.filter((report) => report.status === "maintenance");
   const draftReports = reports.filter((report) => report.status === "draft");
   const openIssues = requests.filter((request) => request.type === "issue" && !["resolved", "rejected"].includes(request.status));
@@ -1106,18 +1133,21 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
       title: "Reportes en mantenimiento",
       detail: `${maintenanceReports.length} reporte${maintenanceReports.length === 1 ? "" : "s"} requieren revision antes de usarse.`,
       color: "#EF4444",
+      dateKey: toDateKey(new Date()),
     },
     openIssues.length > 0 && {
       id: "issues",
       title: "Incidencias reportadas",
       detail: `${openIssues.length} incidencia${openIssues.length === 1 ? "" : "s"} abiertas por usuarios.`,
       color: "#F59E0B",
+      dateKey: toDateKey(new Date()),
     },
     draftReports.length > 0 && {
       id: "drafts",
       title: "Reportes en preparacion",
       detail: `${draftReports.length} reporte${draftReports.length === 1 ? "" : "s"} aun no estan publicados.`,
       color: "#6366F1",
+      dateKey: toDateKey(new Date()),
     },
   ].filter(Boolean);
   const manualVisibleIncidents = manualIncidents
@@ -1126,65 +1156,132 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
       id: incident.id,
       title: incident.title,
       detail: incident.detail,
-      color: incident.severity === "critical" ? "#EF4444" : incident.severity === "warning" ? "#F59E0B" : incident.severity === "success" ? "#10B981" : "#3B82F6",
+      color: getIncidentColor(incident.severity),
+      dateKey: toDateKey(incident.createdAt || incident.updatedAt),
     }));
-  const visibleIncidents = [...manualVisibleIncidents, ...incidents].length ? [...manualVisibleIncidents, ...incidents] : [{
+  const incidentEvents = [...manualVisibleIncidents, ...incidents];
+  const calendarDays = buildCalendarDays(calendarMonth);
+  const incidentsByDate = incidentEvents.reduce((acc, incident) => {
+    const key = incident.dateKey || toDateKey(new Date());
+    acc[key] = acc[key] ? [...acc[key], incident] : [incident];
+    return acc;
+  }, {});
+  const latestDateKey = incidentEvents[0]?.dateKey || toDateKey(new Date());
+  const activeDateKey = selectedDateKey || latestDateKey;
+  const activeDateIncidents = incidentsByDate[activeDateKey] || [];
+  const visibleIncidents = incidentEvents.length ? (activeDateIncidents.length ? activeDateIncidents : incidentEvents.slice(0, 3)) : [{
     id: "healthy",
     title: "Sin incidencias informadas",
     detail: "No hay alertas operativas publicadas para los reportes activos.",
     color: "#10B981",
+    dateKey: toDateKey(new Date()),
   }];
+  const selectedDateLabel = new Date(`${activeDateKey}T12:00:00`).toLocaleDateString("es-PY", { day: "2-digit", month: "short" });
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(280px, .55fr)", gap: 14, marginBottom: 18 }} className="metrics-grid">
-      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
-          <div>
-            <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 3 }}>Reportes principales</h3>
-            <p style={{ fontSize: 11, color: theme.textMuted }}>Acceso directo a los tableros mas usados y disponibles.</p>
-          </div>
-          <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, border: `1px solid ${T.teal}33`, borderRadius: 999, padding: "5px 10px", fontWeight: 700 }}>{liveReports.length} activos</span>
+    <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 18, height: "100%" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <div>
+          <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700 }}>Incidencias</h3>
+          <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>{incidentEvents.length ? `${incidentEvents.length} aviso${incidentEvents.length === 1 ? "" : "s"} en calendario` : "Sin alertas publicadas"}</p>
         </div>
-        <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10 }}>
-          {quickReports.map((report, index) => {
-            const colors = categoryColors[report.category] || categoryColors.Comercial;
+        {isUserAdmin && (
+          <button onClick={onEditIncidents} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 10, padding: "6px 9px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editar</button>
+        )}
+      </div>
+
+      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 14, padding: 10, background: theme.bgSurface, marginBottom: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer" }}>&lt;</button>
+          <span style={{ fontSize: 12, fontWeight: 800, color: theme.text }}>
+            {calendarMonth.toLocaleDateString("es-PY", { month: "long", year: "numeric" })}
+          </span>
+          <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, cursor: "pointer" }}>&gt;</button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+          {["D", "L", "M", "M", "J", "V", "S"].map((day, index) => (
+            <span key={`${day}-${index}`} style={{ textAlign: "center", fontSize: 9, color: theme.textMuted, fontWeight: 800 }}>{day}</span>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+          {calendarDays.map((day) => {
+            const dayIncidents = incidentsByDate[day.key] || [];
+            const isSelected = activeDateKey === day.key;
             return (
-              <button key={report.id} onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", animation: `scaleIn .25s ease-out ${.035 * index}s both` }}>
-                <span style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <svg width="17" height="17" viewBox="0 0 22 22">{iconPaths[report.icon]}</svg>
+              <button key={day.key} onClick={() => setSelectedDateKey(day.key)} style={{ minHeight: 34, borderRadius: 9, border: `1px solid ${isSelected ? T.teal : "transparent"}`, background: isSelected ? (dark ? T.teal + "18" : T.tealBg) : "transparent", color: day.isCurrentMonth ? theme.text : theme.textMuted, cursor: "pointer", opacity: day.isCurrentMonth ? 1 : .45, padding: 3 }}>
+                <span style={{ display: "block", fontSize: 11, fontWeight: day.isToday ? 900 : 700 }}>{day.label}</span>
+                <span style={{ display: "flex", justifyContent: "center", gap: 2, minHeight: 5, marginTop: 2 }}>
+                  {dayIncidents.slice(0, 3).map((incident) => (
+                    <span key={incident.id} style={{ width: 5, height: 5, borderRadius: 999, background: incident.color }}/>
+                  ))}
                 </span>
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 13, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</span>
-                  <span style={{ display: "block", fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.category}</span>
-                </span>
-                <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </button>
             );
           })}
         </div>
       </div>
 
-      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700 }}>Incidencias</h3>
-          {isUserAdmin && (
-            <button onClick={onEditIncidents} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 10, padding: "6px 9px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Editar</button>
-          )}
-        </div>
-        <div style={{ display: "grid", gap: 10 }}>
-          {visibleIncidents.map((incident) => (
-            <div key={incident.id} style={{ padding: 12, borderRadius: 13, background: dark ? incident.color + "10" : incident.color + "0F", border: `1px solid ${incident.color}33` }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: incident.color }}/>
-                <span style={{ fontSize: 12, color: theme.text, fontWeight: 800 }}>{incident.title}</span>
-              </div>
-              <p style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.45 }}>{incident.detail}</p>
+      <div style={{ display: "grid", gap: 9 }}>
+        {incidentEvents.length > 0 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, color: theme.textMuted }}>Seleccionado: <strong style={{ color: theme.text }}>{selectedDateLabel}</strong></span>
+            {activeDateIncidents.length === 0 && <span style={{ fontSize: 10, color: theme.textMuted }}>Mostrando recientes</span>}
+          </div>
+        )}
+        {visibleIncidents.map((incident) => (
+          <div key={incident.id} style={{ padding: 12, borderRadius: 13, background: dark ? incident.color + "10" : incident.color + "0F", border: `1px solid ${incident.color}33` }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: incident.color }}/>
+              <span style={{ fontSize: 12, color: theme.text, fontWeight: 800 }}>{incident.title}</span>
             </div>
-          ))}
-        </div>
+            <p style={{ fontSize: 11, color: theme.textMuted, lineHeight: 1.45 }}>{incident.detail}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
+}
+
+function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, manualIncidents = [], isUserAdmin = false, onEditIncidents, onOpenReport, embedded = false }) {
+  const theme = dark ? darkTheme : lightTheme;
+  const favoriteReports = reports.filter((report) => favorites.includes(report.id) && report.status === "live");
+  const recentLiveReports = recentReports
+    .map((recent) => reports.find((report) => report.id === recent.id))
+    .filter((report) => report && report.status === "live");
+  const liveReports = reports.filter((report) => report.status === "live");
+  const quickReports = Array.from(
+    new Map([...favoriteReports, ...recentLiveReports, ...liveReports].map((report) => [report.id, report])).values()
+  ).slice(0, 8);
+
+  return (
+    <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 18, marginBottom: embedded ? 0 : 18, height: embedded ? "100%" : "auto", display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
+        <div>
+          <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 3 }}>Reportes principales</h3>
+          <p style={{ fontSize: 11, color: theme.textMuted }}>Acceso directo a los tableros mas usados y disponibles.</p>
+        </div>
+        <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, border: `1px solid ${T.teal}33`, borderRadius: 999, padding: "5px 10px", fontWeight: 700 }}>{liveReports.length} activos</span>
+      </div>
+      <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, alignContent: "start" }}>
+        {quickReports.map((report, index) => {
+          const colors = categoryColors[report.category] || categoryColors.Comercial;
+          return (
+            <button key={report.id} onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", animation: `scaleIn .25s ease-out ${.035 * index}s both` }}>
+              <span style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg width="17" height="17" viewBox="0 0 22 22">{iconPaths[report.icon]}</svg>
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: "block", fontSize: 13, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</span>
+                <span style={{ display: "block", fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.category}</span>
+              </span>
+              <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
 }
 
 function IncidentEditor({ dark, incidents, onSave, onClose }) {
@@ -1237,7 +1334,7 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
     const nextDrafts = mergeIncidentDraft(nextIncident);
     setDrafts(nextDrafts);
     reset();
-    onSave(nextDrafts);
+    onSave(nextDrafts, { keepOpen: true });
   };
 
   const saveIncidents = () => {
@@ -2294,7 +2391,8 @@ function Dashboard({ user, onLogout }) {
     }
   }, [reports, favorites, recentViews, notifications, requests, saveAll]);
 
-  const saveSharedIncidents = async (nextIncidents) => {
+  const saveSharedIncidents = async (nextIncidents, options = {}) => {
+    const keepOpen = options.keepOpen === true;
     incidentsRef.current = nextIncidents;
     setIncidents(nextIncidents);
     saveAll(reports, favorites, recentViews, notifications, requests, auditEventsRef.current, nextIncidents);
@@ -2305,10 +2403,10 @@ function Dashboard({ user, onLogout }) {
         setIncidents(data.incidents);
         saveAll(reports, favorites, recentViews, notifications, requests, auditEventsRef.current, data.incidents);
       }
-      setShowIncidentEditor(false);
-      showToast("Incidencias publicadas");
+      if (!keepOpen) setShowIncidentEditor(false);
+      showToast(keepOpen ? "Aviso publicado. Podes cargar otro." : "Incidencias publicadas");
     } catch (e) {
-      setShowIncidentEditor(false);
+      if (!keepOpen) setShowIncidentEditor(false);
       showToast("Incidencias guardadas localmente; pendiente sincronizacion", "error");
     }
   };
@@ -3113,10 +3211,16 @@ function Dashboard({ user, onLogout }) {
         </div>
 
         <div style={{ padding: "24px 28px" }}>
-          {/* Welcome Banner - only on dashboard view */}
-          {activeView === "dashboard" && <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews}/>}
-
-          {activeView === "dashboard" && <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)} onOpenReport={openReport}/>}
+          {/* Welcome and incident calendar - only on dashboard view */}
+          {activeView === "dashboard" && (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "stretch" }} className="metrics-grid">
+              <div style={{ display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 14 }}>
+                <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews} embedded/>
+                <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)} onOpenReport={openReport} embedded/>
+              </div>
+              <IncidentCalendarPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)}/>
+            </div>
+          )}
 
           {/* KPI Cards */}
           {false && activeView === "dashboard" && <KpiCards dark={dark} reports={userVisibleReports} favorites={favorites} recentViews={recentViews}/>}
