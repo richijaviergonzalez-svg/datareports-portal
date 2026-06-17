@@ -1131,7 +1131,7 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
   const liveReports = reports.filter((report) => report.status === "live");
   const quickReports = Array.from(
     new Map([...favoriteReports, ...recentLiveReports, ...liveReports].map((report) => [report.id, report])).values()
-  ).slice(0, 6);
+  ).slice(0, 8);
   const maintenanceReports = reports.filter((report) => report.status === "maintenance");
   const draftReports = reports.filter((report) => report.status === "draft");
   const openIssues = requests.filter((request) => request.type === "issue" && !["resolved", "rejected"].includes(request.status));
@@ -1187,8 +1187,8 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
   const selectedDateLabel = new Date(`${activeDateKey}T12:00:00`).toLocaleDateString("es-PY", { day: "2-digit", month: "short" });
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18 }} className="metrics-grid">
-      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "start" }} className="metrics-grid">
+      <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 18, alignSelf: "start" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
           <div>
             <h3 style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginBottom: 3 }}>Reportes principales</h3>
@@ -1196,7 +1196,7 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
           </div>
           <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, border: `1px solid ${T.teal}33`, borderRadius: 999, padding: "5px 10px", fontWeight: 700 }}>{liveReports.length} activos</span>
         </div>
-        <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10 }}>
+        <div className="reports-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
           {quickReports.map((report, index) => {
             const colors = categoryColors[report.category] || categoryColors.Comercial;
             return (
