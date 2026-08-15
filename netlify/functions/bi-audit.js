@@ -1,4 +1,4 @@
-const { getStore } = require("@netlify/blobs");
+const { connectLambda, getStore } = require("@netlify/blobs");
 const { authenticate } = require("./_auth");
 
 const STORE_NAME = "datareports-bi";
@@ -57,7 +57,8 @@ function parseJsonBody(event) {
   }
 }
 
-function getAuditStore() {
+function getAuditStore(event) {
+  connectLambda(event);
   return getStore(STORE_NAME);
 }
 
@@ -124,7 +125,7 @@ exports.handler = async (event) => {
       });
     }
 
-    const store = getAuditStore();
+    const store = getAuditStore(event);
 
     if (method === "GET") {
       if (!auth.isAdmin) {
