@@ -566,6 +566,9 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     setList(optimisticList);
     try {
       const result = await onSave(optimisticList);
+      if (result?.ok === false) {
+        throw new Error(result.error || "No se pudo publicar el catálogo central.");
+      }
       const syncedList = normalizeReports(result?.reports || optimisticList);
       setList(syncedList);
       showSuccess(msg || (result?.synced ? "Catálogo sincronizado correctamente" : "Cambios guardados localmente"));
@@ -2243,8 +2246,13 @@ function Dashboard({ user, onLogout }) {
       setReports(localReports);
       saveAll(localReports, favorites, recentViews, notifications, requests);
       setReportSyncStatus("local");
-      setReportSyncMessage("Cambios guardados localmente");
-      return { ok: true, synced: false, reports: localReports };
+      setReportSyncMessage(e.message || "Cambios guardados localmente");
+      return {
+        ok: false,
+        synced: false,
+        reports: localReports,
+        error: e.message || "No se pudo sincronizar el catálogo central",
+      };
     }
   };
 
