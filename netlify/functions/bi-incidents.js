@@ -1,4 +1,4 @@
-const { getStore } = require("@netlify/blobs");
+const { connectLambda, getStore } = require("@netlify/blobs");
 const { authenticate } = require("./_auth");
 
 const STORE_NAME = "datareports-bi";
@@ -57,7 +57,8 @@ function parseJsonBody(event) {
   }
 }
 
-function getIncidentsStore() {
+function getIncidentsStore(event) {
+  connectLambda(event);
   return getStore(STORE_NAME);
 }
 
@@ -115,7 +116,7 @@ exports.handler = async (event) => {
       });
     }
 
-    const store = getIncidentsStore();
+    const store = getIncidentsStore(event);
 
     if (method === "GET") {
       const incidents = await readJSON(store, INCIDENTS_KEY, []);
