@@ -7,6 +7,7 @@ export function loadPortalState() {
 
     const data = JSON.parse(stored);
     return {
+      reports: Array.isArray(data.reports) ? data.reports : [],
       favorites: Array.isArray(data.favorites) ? data.favorites : [],
       recentViews: Array.isArray(data.recentViews) ? data.recentViews : [],
       notifications: Array.isArray(data.notifications) ? data.notifications : [],
@@ -19,11 +20,12 @@ export function loadPortalState() {
   }
 }
 
-export function savePortalState({ favorites, recentViews, notifications, requests, auditEvents, incidents }) {
+export function savePortalState({ reports, favorites, recentViews, notifications, requests, auditEvents, incidents }) {
   try {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
+        reports: reports || [],
         favorites: favorites || [],
         recentViews: recentViews || [],
         notifications: notifications || [],

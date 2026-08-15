@@ -295,6 +295,13 @@ exports.handler = async (event) => {
         });
       }
 
+      if (normalized.length === 0 && body.allowEmptyCatalog !== true) {
+        return json(400, {
+          ok: false,
+          error: "Catálogo vacío rechazado. Use allowEmptyCatalog=true solo para una limpieza intencional.",
+        });
+      }
+
       await writeJSON(store, REPORTS_KEY, normalized);
 
       await appendAudit(store, {

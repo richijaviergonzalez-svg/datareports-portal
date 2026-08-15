@@ -2080,6 +2080,7 @@ function Dashboard({ user, onLogout }) {
 
   useEffect(() => {
     const savedState = loadPortalState();
+    if (savedState.reports?.length) setReports(normalizeReports(savedState.reports));
     if (savedState.favorites) setFavorites(savedState.favorites);
     if (savedState.recentViews) setRecentViews(savedState.recentViews);
     if (savedState.notifications) setNotifications(savedState.notifications);
@@ -2126,6 +2127,7 @@ function Dashboard({ user, onLogout }) {
   const saveAll = useCallback((r, f, rv, n, req, audit = auditEventsRef.current, incidentList = incidentsRef.current) => {
     try {
       savePortalState({
+        reports: r || [],
         favorites: f,
         recentViews: rv,
         notifications: n || [],
@@ -2158,6 +2160,22 @@ function Dashboard({ user, onLogout }) {
 
       // Netlify Blobs es la fuente oficial. Si el admin eliminó reportes, también debe verse vacío.
       const sharedReports = normalizeReports(data.reports);
+      if (sharedReports.length === 0) {
+        const recoveryReports = normalizeReports([
+          ...reports,
+          ...recentViews,
+          ...DEFAULT_REPORTS,
+        ]);
+
+        if (recoveryReports.length > 0) {
+          setReports(recoveryReports);
+          saveAll(recoveryReports, favorites, recentViews, notifications, requests);
+          setReportSyncStatus("local");
+          setReportSyncMessage("Catálogo compartido vacío; usando respaldo local");
+          return;
+        }
+      }
+
       setReports(sharedReports);
       saveAll(sharedReports, favorites, recentViews, notifications, requests);
 
@@ -2167,7 +2185,7 @@ function Dashboard({ user, onLogout }) {
       setReportSyncStatus("local");
       setReportSyncMessage("Catálogo local: pendiente conectar bi-reports");
     }
-  }, [favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
+  }, [reports, favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
 
   // Cargar catálogo central al iniciar sesión y mantenerlo actualizado para todos los usuarios.
   useEffect(() => {
