@@ -58,17 +58,6 @@ function parseJsonBody(event) {
 }
 
 function getAuditStore() {
-  const siteID = process.env.NETLIFY_SITE_ID || process.env.SITE_ID;
-  const token = process.env.NETLIFY_BLOBS_TOKEN || process.env.NETLIFY_AUTH_TOKEN;
-
-  if (siteID && token) {
-    return getStore({
-      name: STORE_NAME,
-      siteID,
-      token,
-    });
-  }
-
   return getStore(STORE_NAME);
 }
 
@@ -77,7 +66,7 @@ async function readJSON(store, key, fallback) {
     const value = await store.get(key, { type: "json" });
     return value ?? fallback;
   } catch (error) {
-    return fallback;
+    throw error;
   }
 }
 
