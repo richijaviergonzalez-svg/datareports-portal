@@ -548,6 +548,8 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const editorScrollRef = useRef(null);
 
   useEffect(() => setList(normalizeReports(reports)), [reports]);
 
@@ -560,6 +562,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     setParsed(null);
     setTestResult(null);
     setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", version: "", releaseNotes: "", releasedAt: "", versionHistory: [], visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "" });
+    requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
   };
 
   const handleUrlPaste = (val) => {
@@ -687,6 +690,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     setUrlInput(r.originalUrl || "");
     setParsed(r.id ? { reportId: r.id, groupId: r.groupId || "" } : null);
     setTestResult(null);
+    requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
   };
 
   const handleSaveEdit = async () => {
@@ -695,7 +699,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     const updatedReport = makeReportFromForm();
     const updated = list.map(r => r.id === editing ? updatedReport : r);
     const ok = await persistList(updated, "Reporte actualizado");
-    if (ok) resetForm();
+    if (ok) handleEdit(updatedReport);
   };
 
   const handleDelete = async (id) => {
@@ -730,11 +734,16 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
   const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, fontSize: 13, fontFamily: "'Outfit', system-ui", outline: "none" };
   const selectStyle = { ...inputStyle, cursor: "pointer", appearance: "none", WebkitAppearance: "none" };
   const mutedLabel = { fontSize: 10, color: theme.textMuted, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: .8, fontWeight: 500 };
+  const visibleCatalog = list.filter(report => {
+    const query = catalogSearch.trim().toLowerCase();
+    if (!query) return true;
+    return [report.name, report.category, report.owner, report.version].some(value => String(value || "").toLowerCase().includes(query));
+  });
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 16 }}>
-      <div style={{ width: 980, maxHeight: "92vh", background: theme.bgCard, borderRadius: 24, border: `1px solid ${theme.border}`, overflow: "hidden", display: "flex", flexDirection: "column", animation: "fadeUp .3s ease-out" }}>
-        <div style={{ padding: "20px 28px", borderBottom: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+      <div className="admin-shell" style={{ width: "min(1440px, 96vw)", height: "min(920px, 94vh)", background: theme.bgCard, borderRadius: 16, border: `1px solid ${theme.border}`, overflow: "hidden", display: "flex", flexDirection: "column", animation: "scaleIn .24s ease-out", position: "relative", boxShadow: `0 30px 90px ${dark ? "rgba(0,0,0,.6)" : "rgba(15,23,42,.22)"}` }}>
+        <div style={{ padding: "16px 22px", borderBottom: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0, minHeight: 72 }}>
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>Gestor de Catálogo BI</h2>
             <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>Reportes centralizados, gobierno y validación de Power BI</p>
@@ -743,22 +752,37 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
             <span style={{ fontSize: 11, fontWeight: 600, color: reportSyncStatus === "shared" ? T.teal : "#F59E0B", background: reportSyncStatus === "shared" ? (dark ? T.teal + "18" : T.tealBg) : (dark ? "#F59E0B18" : "#FFFBEB"), padding: "6px 12px", borderRadius: 999 }}>
               {reportSyncMessage}
             </span>
+            <button onClick={resetForm} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 13px", borderRadius: 10, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, cursor: saving ? "wait" : "pointer", fontSize: 12, fontWeight: 700 }}>
+              <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+              Nuevo reporte
+            </button>
             <button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, fontSize: 18 }}>×</button>
           </div>
         </div>
 
+        {saving && <div style={{ position: "absolute", left: 0, right: 0, top: 70, height: 3, zIndex: 30, overflow: "hidden", background: dark ? "#2563EB18" : "#DBEAFE" }}><div className="admin-save-progress" style={{ width: "42%", height: "100%", background: `linear-gradient(90deg, ${T.teal}, ${T.tealLight})`, borderRadius: 99 }}/></div>}
+
         {(successMsg || errorMsg) && (
-          <div style={{ margin: "12px 28px 0", padding: "10px 16px", borderRadius: 12, background: successMsg ? (dark ? "#06543520" : "#D1FAE5") : (dark ? "#7F1D1D20" : "#FEF2F2"), border: `1px solid ${successMsg ? (dark ? "#065F4640" : "#A7F3D0") : (dark ? "#7F1D1D40" : "#FECACA")}`, color: successMsg ? (dark ? "#34D399" : "#065F46") : (dark ? "#F87171" : "#991B1B"), fontSize: 12, fontWeight: 500 }}>
+          <div style={{ position: "absolute", top: 82, right: 24, zIndex: 40, maxWidth: 420, padding: "11px 16px", borderRadius: 11, background: successMsg ? (dark ? "#12372E" : "#ECFDF5") : (dark ? "#3B1D22" : "#FEF2F2"), border: `1px solid ${successMsg ? (dark ? "#34D39955" : "#A7F3D0") : (dark ? "#F8717155" : "#FECACA")}`, color: successMsg ? (dark ? "#34D399" : "#065F46") : (dark ? "#F87171" : "#991B1B"), fontSize: 12, fontWeight: 600, boxShadow: "0 12px 30px rgba(0,0,0,.16)", animation: "slideInRight .22s ease-out" }}>
             {successMsg || errorMsg}
           </div>
         )}
 
-        <div style={{ flex: 1, overflow: "auto", padding: 28 }}>
-          <div style={{ marginBottom: 28, padding: 24, borderRadius: 18, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, color: T.teal, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        {saving && (
+          <div style={{ position: "absolute", top: 84, right: 24, zIndex: 35, display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 11, background: dark ? "#172033" : "#FFFFFF", border: `1px solid ${T.teal}55`, color: theme.text, boxShadow: "0 12px 30px rgba(0,0,0,.16)", animation: "scaleIn .2s ease-out" }}>
+            <span style={{ width: 16, height: 16, border: `2px solid ${T.teal}33`, borderTopColor: T.teal, borderRadius: "50%", animation: "spin .65s linear infinite" }}/>
+            <span style={{ fontSize: 11, fontWeight: 700 }}>Publicando catálogo...</span>
+          </div>
+        )}
+
+        <div className="admin-workspace" aria-busy={saving} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "340px minmax(0, 1fr)", overflow: "hidden", pointerEvents: saving ? "none" : "auto" }}>
+          <div ref={editorScrollRef} className="admin-editor" style={{ gridColumn: 2, gridRow: 1, overflowY: "auto", minHeight: 0, padding: 28, background: theme.bgSurface, position: "relative" }}>
+            <div style={{ maxWidth: 920, margin: "0 auto" }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.text, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: T.teal }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="8" y1="5" x2="8" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><line x1="5" y1="8" x2="11" y2="8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               {editing ? "Editar reporte" : "Agregar nuevo reporte"}
             </h3>
+            <p style={{ fontSize: 11, color: theme.textMuted, marginBottom: 20 }}>{editing ? "Los cambios se publican en el catálogo compartido al guardar." : "Completá la información para incorporar un tablero al catálogo."}</p>
 
             <div style={{ marginBottom: 16 }}>
               <label style={mutedLabel}>Paso 1 — URL del reporte de Power BI</label>
@@ -805,6 +829,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
               {form.versionHistory.length > 0 && <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 8 }}>{form.versionHistory.length} {form.versionHistory.length === 1 ? "versión anterior registrada" : "versiones anteriores registradas"}</p>}
             </div>
 
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 12px" }}><span style={{ fontSize: 10, fontWeight: 700, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .9 }}>Gobierno y operación</span><span style={{ height: 1, flex: 1, background: theme.border }}/></div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
               <div><label style={mutedLabel}>Responsable</label><input value={form.owner} onChange={e => setForm({ ...form, owner: e.target.value })} style={inputStyle}/></div>
               <div><label style={mutedLabel}>Audiencia</label><input value={form.audience} onChange={e => setForm({ ...form, audience: e.target.value })} placeholder="Retail, Dirección, Corporativo..." style={inputStyle}/></div>
@@ -856,6 +881,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
               <input value={form.technicalNotes} onChange={e => setForm({ ...form, technicalNotes: e.target.value })} placeholder="Observaciones técnicas para BI/admin" style={inputStyle}/>
             </div>
 
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 12px" }}><span style={{ fontSize: 10, fontWeight: 700, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .9 }}>Presentación y estado</span><span style={{ height: 1, flex: 1, background: theme.border }}/></div>
             <div style={{ marginBottom: 16 }}>
               <label style={mutedLabel}>Ícono</label>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -880,43 +906,64 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10, position: "sticky", bottom: -28, margin: "20px -28px -28px", padding: "16px 28px", background: dark ? "rgba(30,34,45,.96)" : "rgba(244,247,251,.96)", backdropFilter: "blur(12px)", borderTop: `1px solid ${theme.border}`, zIndex: 10 }}>
               <button onClick={testConnection} disabled={testing || saving} style={{ padding: "12px 18px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, fontSize: 13, fontWeight: 600, cursor: testing ? "wait" : "pointer" }}>{testing ? "Validando..." : "Probar conexión"}</button>
               <button onClick={editing ? handleSaveEdit : handleAdd} disabled={saving} style={{ flex: 1, padding: "12px 20px", borderRadius: 14, border: "none", background: saving ? theme.border : T.teal, color: saving ? theme.textMuted : "white", fontSize: 14, fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
-                {saving ? "Guardando..." : editing ? "Guardar cambios" : "Agregar reporte al catálogo"}
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9 }}>
+                  {saving && <span style={{ width: 15, height: 15, border: `2px solid ${theme.textMuted}55`, borderTopColor: theme.textMuted, borderRadius: "50%", animation: "spin .65s linear infinite" }}/>}
+                  {saving ? "Publicando cambios..." : editing ? "Guardar cambios" : "Agregar reporte al catálogo"}
+                </span>
               </button>
               {editing && <button onClick={resetForm} disabled={saving} style={{ padding: "12px 22px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, fontSize: 13, cursor: "pointer" }}>Cancelar</button>}
             </div>
           </div>
+          </div>
 
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: theme.textSecondary, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>Reportes configurados ({list.length})</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {list.map(report => {
+          <div className="admin-catalog" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", borderRight: `1px solid ${theme.border}`, background: theme.bgCard, padding: 16 }}>
+            <div style={{ position: "sticky", top: -16, zIndex: 8, background: theme.bgCard, padding: "4px 0 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                <div>
+                  <h3 style={{ fontSize: 12, fontWeight: 700, color: theme.text, textTransform: "uppercase", letterSpacing: .8 }}>Catálogo</h3>
+                  <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>{list.length} reportes configurados</p>
+                </div>
+                <span style={{ fontSize: 10, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, padding: "4px 8px", borderRadius: 7 }}>{visibleCatalog.length} visibles</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 10, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
+                <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted, flexShrink: 0 }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.4" fill="none"/><path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+                <input value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)} placeholder="Buscar reporte..." style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: theme.text, fontSize: 12, fontFamily: "'Outfit', system-ui" }}/>
+                {catalogSearch && <button onClick={() => setCatalogSearch("")} style={{ border: "none", background: "transparent", color: theme.textMuted, cursor: "pointer", fontSize: 14 }}>×</button>}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {visibleCatalog.map(report => {
               const colors = categoryColors[report.category] || categoryColors.Comercial;
+              const active = editing === report.id;
               return (
-                <div key={report.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", borderRadius: 16, background: theme.bgCard, border: `1px solid ${editing === report.id ? T.teal : theme.border}`, transition: "all .2s" }}>
-                  <div style={{ width: 40, height: 40, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <svg width="18" height="18" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
+                <div key={report.id} onClick={() => handleEdit(report)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 10px", borderRadius: 11, background: active ? (dark ? T.teal + "12" : T.tealBg) : theme.bgCard, border: `1px solid ${active ? T.teal + "66" : theme.border}`, transition: "background .18s, border-color .18s, transform .18s", cursor: "pointer", position: "relative", transform: active ? "translateX(2px)" : "none" }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg width="16" height="16" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{report.name}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</div>
                       {report.version && <span style={{ fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "2px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
                     </div>
-                    <div style={{ fontSize: 10, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>ID: {report.id}</div>
-                    <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.owner || "Equipo BI"} · {report.refreshFrequency || "Según dataset"} · Criticidad {report.criticality || "media"} · Visibilidad: {getVisibilityLabel(report)}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, minWidth: 0 }}>
+                      <span style={{ fontSize: 9, color: dark ? colors.darkText : colors.accent, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.category}</span>
+                      <span style={{ width: 3, height: 3, borderRadius: 99, background: theme.textMuted }}/>
+                      <span style={{ fontSize: 9, color: report.status === "live" ? "#10B981" : report.status === "draft" ? "#F59E0B" : "#EF4444" }}>{statusConfig[report.status]?.label || "Activo"}</span>
+                    </div>
                   </div>
-                  <span style={{ fontSize: 10, fontWeight: 600, color: dark ? colors.darkText : colors.accent, background: dark ? colors.darkBg : colors.bg, padding: "3px 10px", borderRadius: 8 }}>{report.category}</span>
-                  <StatusBadge status={report.status} dark={dark}/>
-                  <button onClick={() => handleEdit(report)} style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <button onClick={(e) => { e.stopPropagation(); handleEdit(report); }} title="Editar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/></svg>
                   </button>
                   <div style={{ position: "relative" }}>
-                    <button onClick={() => setDeleteConfirm(deleteConfirm === report.id ? null : report.id)} style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(deleteConfirm === report.id ? null : report.id); }} title="Eliminar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: "#EF4444" }}><path d="M3 4h10M5.5 4V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1m1.5 0l-.5 9a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1L4 4" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
                     </button>
                     {deleteConfirm === report.id && (
-                      <div style={{ position: "absolute", top: 38, right: 0, width: 230, padding: 16, borderRadius: 14, background: theme.bgCard, border: `1px solid ${theme.border}`, boxShadow: `0 8px 24px ${dark ? "rgba(0,0,0,.4)" : "rgba(0,0,0,.1)"}`, zIndex: 10 }}>
+                      <div onClick={e => e.stopPropagation()} style={{ position: "absolute", top: 36, right: 0, width: 230, padding: 14, borderRadius: 12, background: theme.bgCard, border: `1px solid ${theme.border}`, boxShadow: `0 8px 24px ${dark ? "rgba(0,0,0,.4)" : "rgba(0,0,0,.1)"}`, zIndex: 12 }}>
                         <p style={{ fontSize: 12, color: theme.text, marginBottom: 10 }}>¿Eliminar "{report.name}" del catálogo compartido?</p>
                         <div style={{ display: "flex", gap: 8 }}>
                           <button onClick={() => handleDelete(report.id)} style={{ flex: 1, padding: "8px", borderRadius: 10, border: "none", background: "#EF4444", color: "white", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Eliminar</button>
@@ -928,6 +975,8 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
                 </div>
               );
             })}
+            {visibleCatalog.length === 0 && <div style={{ padding: "32px 12px", textAlign: "center", color: theme.textMuted, fontSize: 11 }}>No encontramos reportes con esa búsqueda.</div>}
+            </div>
           </div>
         </div>
       </div>
@@ -949,6 +998,8 @@ const globalStyles = `
 @keyframes scaleIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
 @keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
 @keyframes breathe { 0%,100% { box-shadow: 0 0 0 0 rgba(13,148,136,0); } 50% { box-shadow: 0 0 0 6px rgba(13,148,136,0.08); } }
+@keyframes adminProgress { from { transform:translateX(-110%); } to { transform:translateX(260%); } }
+.admin-save-progress { animation:adminProgress 1.1s cubic-bezier(.4,0,.2,1) infinite; }
 * { box-sizing:border-box; margin:0; padding:0; }
 .powerbi-embed-shell iframe,
 .powerbi-embed-shell > div,
@@ -962,6 +1013,7 @@ const globalStyles = `
 ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
 @media (max-width: 1024px) {
   .requests-layout { grid-template-columns: 1fr !important; }
+  .admin-workspace { grid-template-columns: 290px minmax(0, 1fr) !important; }
 }
 @media (max-width: 768px) {
   .hide-mobile { display: none !important; }
@@ -988,6 +1040,10 @@ const globalStyles = `
   .topbar-search { display: none !important; }
   .metrics-grid { grid-template-columns: 1fr !important; }
   .requests-layout { grid-template-columns: 1fr !important; }
+  .admin-shell { width:100vw !important; height:100vh !important; max-height:none !important; border-radius:0 !important; }
+  .admin-workspace { display:flex !important; flex-direction:column !important; overflow:auto !important; }
+  .admin-catalog { order:1; min-height:220px !important; max-height:280px; border-right:none !important; border-bottom:1px solid rgba(148,163,184,.22); }
+  .admin-editor { order:2; overflow:visible !important; padding:20px !important; }
 }
 @media (min-width: 769px) {
   .mobile-menu-btn { display: none !important; }
