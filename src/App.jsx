@@ -223,7 +223,8 @@ const Sparkline = ({ data, color, width = 80, height = 28 }) => {
 let powerbiClientPromise = null;
 let loadedPowerbiService = null;
 let powerbiPreloadStarted = false;
-const REPORT_PREVIEW_CACHE_TTL_MS = 15 * 60 * 1000;
+const REPORT_PREVIEW_CACHE_LIMIT = 3;
+const REPORT_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000;
 
 function loadPowerBiClient() {
   if (!powerbiClientPromise) {
@@ -2217,6 +2218,7 @@ function Dashboard({ user, onLogout }) {
   const [hoveredCard, setHoveredCard] = useState(null);
   const [previewCardId, setPreviewCardId] = useState(null);
   const [previewCardVisible, setPreviewCardVisible] = useState(false);
+  const [cachedPreviewIds, setCachedPreviewIds] = useState([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("name");
   const [detailReport, setDetailReport] = useState(null);
@@ -2259,7 +2261,8 @@ function Dashboard({ user, onLogout }) {
   const incidentsRef = useRef([]);
   const auditPushDedupeRef = useRef({});
   const previewOpenTimerRef = useRef(null);
-  const previewExpiryTimerRef = useRef(null);
+  const previewCloseTimerRef = useRef(null);
+  const previewExpiryTimersRef = useRef(new Map());
   const sharedSyncRef = useRef({
     reports: 0,
     requests: 0,
@@ -2267,55 +2270,86 @@ function Dashboard({ user, onLogout }) {
     audit: 0,
   });
 
-  const clearPreviewTimers = useCallback(() => {
+  const clearPreviewInteractionTimers = useCallback(() => {
     if (previewOpenTimerRef.current) clearTimeout(previewOpenTimerRef.current);
-    if (previewExpiryTimerRef.current) clearTimeout(previewExpiryTimerRef.current);
+    if (previewCloseTimerRef.current) clearTimeout(previewCloseTimerRef.current);
     previewOpenTimerRef.current = null;
-    previewExpiryTimerRef.current = null;
+    previewCloseTimerRef.current = null;
+  }, []);
+
+  const clearPreviewCacheTimers = useCallback(() => {
+    previewExpiryTimersRef.current.forEach(timer => clearTimeout(timer));
+    previewExpiryTimersRef.current.clear();
+  }, []);
+
+  const clearAllPreviewTimers = useCallback(() => {
+    clearPreviewInteractionTimers();
+    clearPreviewCacheTimers();
+  }, [clearPreviewCacheTimers, clearPreviewInteractionTimers]);
+
+  const cacheReportPreview = useCallback((reportId) => {
+    const existingTimer = previewExpiryTimersRef.current.get(reportId);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    const expiryTimer = window.setTimeout(() => {
+      previewExpiryTimersRef.current.delete(reportId);
+      setCachedPreviewIds(current => current.filter(id => id !== reportId));
+      setPreviewCardId(current => current === reportId ? null : current);
+    }, REPORT_PREVIEW_CACHE_TTL_MS);
+    previewExpiryTimersRef.current.set(reportId, expiryTimer);
+
+    setCachedPreviewIds(current => {
+      const ordered = [...current.filter(id => id !== reportId), reportId];
+      const evicted = ordered.slice(0, Math.max(0, ordered.length - REPORT_PREVIEW_CACHE_LIMIT));
+      evicted.forEach(id => {
+        const timer = previewExpiryTimersRef.current.get(id);
+        if (timer) clearTimeout(timer);
+        previewExpiryTimersRef.current.delete(id);
+      });
+      return ordered.slice(-REPORT_PREVIEW_CACHE_LIMIT);
+    });
   }, []);
 
   const showCardPreview = useCallback((reportId, immediate = false) => {
-    clearPreviewTimers();
+    clearPreviewInteractionTimers();
     const reveal = () => {
+      cacheReportPreview(reportId);
       setPreviewCardVisible(false);
       setPreviewCardId(reportId);
       window.requestAnimationFrame(() => setPreviewCardVisible(true));
     };
     if (immediate) reveal();
     else previewOpenTimerRef.current = window.setTimeout(reveal, 450);
-  }, [clearPreviewTimers]);
+  }, [cacheReportPreview, clearPreviewInteractionTimers]);
 
-  const hideCardPreview = useCallback((reportId, immediate = false) => {
+  const hideCardPreview = useCallback(() => {
     if (previewOpenTimerRef.current) clearTimeout(previewOpenTimerRef.current);
     previewOpenTimerRef.current = null;
     setPreviewCardVisible(false);
-    if (immediate) {
+    if (previewCloseTimerRef.current) clearTimeout(previewCloseTimerRef.current);
+    previewCloseTimerRef.current = window.setTimeout(() => {
       setPreviewCardId(null);
-      return;
-    }
-    if (previewExpiryTimerRef.current) clearTimeout(previewExpiryTimerRef.current);
-    previewExpiryTimerRef.current = window.setTimeout(() => {
-      setPreviewCardId(null);
-      previewExpiryTimerRef.current = null;
-    }, REPORT_PREVIEW_CACHE_TTL_MS);
+      previewCloseTimerRef.current = null;
+    }, 180);
   }, []);
 
   const toggleTouchPreview = useCallback((reportId, event) => {
     event.stopPropagation();
-    if (previewCardId === reportId && previewCardVisible) hideCardPreview(reportId);
+    if (previewCardId === reportId && previewCardVisible) hideCardPreview();
     else showCardPreview(reportId, true);
   }, [hideCardPreview, previewCardId, previewCardVisible, showCardPreview]);
 
   useEffect(() => {
     preloadPowerBiResources();
-    return () => clearPreviewTimers();
-  }, [clearPreviewTimers]);
+    return () => clearAllPreviewTimers();
+  }, [clearAllPreviewTimers]);
 
   useEffect(() => {
-    clearPreviewTimers();
+    clearAllPreviewTimers();
     setPreviewCardVisible(false);
     setPreviewCardId(null);
-  }, [activeCategory, activeView, clearPreviewTimers, previewUserEmail, searchQuery, sortBy, statusFilter]);
+    setCachedPreviewIds([]);
+  }, [activeCategory, activeView, clearAllPreviewTimers, previewUserEmail, searchQuery, sortBy, statusFilter]);
 
   const buildUiState = useCallback((overrides = {}) => ({
     app: "datareports",
@@ -2685,9 +2719,10 @@ function Dashboard({ user, onLogout }) {
       showToast("No tenés permiso para ver este reporte en DataReports", "error");
       return;
     }
-    clearPreviewTimers();
+    clearAllPreviewTimers();
     setPreviewCardVisible(false);
     setPreviewCardId(null);
+    setCachedPreviewIds([]);
     const { pushHistory = true } = options;
     runPortalTransition(() => {
       setReportZoom(100);
@@ -4080,13 +4115,14 @@ function Dashboard({ user, onLogout }) {
               const colors = categoryColors[report.category] || categoryColors.Comercial;
               const isHovered = hoveredCard === report.id;
               const isPreview = previewCardId === report.id;
+              const isCachedPreview = cachedPreviewIds.includes(report.id);
               const isFav = favorites.includes(report.id);
               const isMaintenance = report.status === "maintenance";
               return (
                 <div key={report.id} className="premium-report-card motion-stagger-item"
                   onPointerEnter={(event) => { if (event.pointerType === "mouse") { setHoveredCard(report.id); if (!isMaintenance) showCardPreview(report.id); } }}
                   onPointerMove={handlePremiumPointerMove}
-                  onPointerLeave={(event) => { if (event.pointerType === "mouse") { setHoveredCard(null); hideCardPreview(report.id); } resetPremiumPointer(event); }}
+                  onPointerLeave={(event) => { if (event.pointerType === "mouse") { setHoveredCard(null); hideCardPreview(); } resetPremiumPointer(event); }}
                   style={{
                     background: theme.bgCard, borderRadius: 20, padding: 0, overflow: "hidden", minHeight: 284,
                     border: `1.5px solid ${isHovered || isPreview ? (dark ? colors.darkText + "44" : colors.accent + "44") : theme.border}`,
@@ -4151,11 +4187,11 @@ function Dashboard({ user, onLogout }) {
                      </button>
                    </div>
 
-                   {isPreview && !isMaintenance && (
-                     <div className={`report-card-preview${previewCardVisible ? " is-visible" : ""}`} style={{ background: theme.bgCard }}>
+                   {isCachedPreview && !isMaintenance && (
+                     <div className={`report-card-preview${isPreview && previewCardVisible ? " is-visible" : ""}`} style={{ background: theme.bgCard }}>
                        <div className="report-card-preview-media" style={{ background: dark ? "#0D0F14" : "#F3F6FA", borderBottom: `1px solid ${theme.border}` }}>
                          <PowerBIEmbed report={report} dark={dark} preview/>
-                         <button type="button" className="report-card-preview-close" onClick={(event) => { event.stopPropagation(); hideCardPreview(report.id); }} aria-label="Cerrar vista previa" title="Cerrar vista previa">
+                         <button type="button" className="report-card-preview-close" onClick={(event) => { event.stopPropagation(); hideCardPreview(); }} aria-label="Cerrar vista previa" title="Cerrar vista previa">
                            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                          </button>
                        </div>
