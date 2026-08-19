@@ -315,6 +315,24 @@ button.motion-control:not(.sidebar-nav-item):not(:disabled):hover {
   gap: 14px;
 }
 
+.report-loading-focus {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 3;
+  min-width: 250px;
+  max-width: calc(100% - 36px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 1px solid;
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  transform: translate(-50%, -50%);
+  animation: scaleIn var(--motion-normal) var(--motion-ease-premium) both;
+}
+
 .report-loading-line {
   height: 14px;
   border-radius: 6px;
