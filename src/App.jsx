@@ -222,6 +222,9 @@ const Sparkline = ({ data, color, width = 80, height = 28 }) => {
 // ========================
 let powerbiClientPromise = null;
 let loadedPowerbiService = null;
+let powerbiPreloadStarted = false;
+const REPORT_PREVIEW_CACHE_LIMIT = 3;
+const REPORT_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000;
 
 function loadPowerBiClient() {
   if (!powerbiClientPromise) {
@@ -246,8 +249,23 @@ function getLoadedPowerBiService() {
   return loadedPowerbiService;
 }
 
-function PowerBIEmbed({ report, dark }) {
-  const containerId = `pbi-container-${report.id}`;
+async function preloadPowerBiResources() {
+  if (powerbiPreloadStarted) return;
+  powerbiPreloadStarted = true;
+  try {
+    const { service } = await loadPowerBiClient();
+    service.preload({
+      type: "report",
+      embedUrl: "https://app.powerbi.com/reportEmbed",
+    });
+  } catch (error) {
+    powerbiPreloadStarted = false;
+    console.warn("Power BI preload failed:", error);
+  }
+}
+
+function PowerBIEmbed({ report, dark, preview = false }) {
+  const containerId = `pbi-${preview ? "preview" : "container"}-${report.id}`;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -288,7 +306,7 @@ function PowerBIEmbed({ report, dark }) {
           settings: {
             panes: {
               filters: { visible: false },
-              pageNavigation: { visible: true },
+              pageNavigation: { visible: !preview },
             },
             background: models.BackgroundType.Default,
             layoutType: models.LayoutType.Custom,
@@ -364,7 +382,7 @@ function PowerBIEmbed({ report, dark }) {
         }
       }
     };
-  }, [report.id, report.groupId, retryCount]);
+  }, [report.id, report.groupId, report.version, report.updatedAt, retryCount, preview]);
 
   const handleRetry = () => {
     setRetryCount(c => c + 1);
@@ -381,7 +399,12 @@ function PowerBIEmbed({ report, dark }) {
         background: dark ? "#0D0F14" : "#F9FAFB",
       }}
     >
-      {loading && (
+      {loading && (preview ? (
+        <div className="report-card-preview-loading" role="status" aria-label={`Preparando vista previa de ${report.name}`}>
+          <Hourglass size={24} bgOpacity={0.1} speed={1.75} color={dark ? "#E8ECF4" : "black"}/>
+          <span>Preparando vista previa</span>
+        </div>
+      ) : (
         <div className="report-loading-shell" aria-live="polite" aria-label={`Cargando ${report.name}`} style={{
           background: dark ? "#0D0F14" : "#F9FAFB",
           "--skeleton-base": dark ? "#1A1F29" : "#E9EEF5",
@@ -412,9 +435,14 @@ function PowerBIEmbed({ report, dark }) {
             </div>
           </div>
         </div>
-      )}
+      ))}
 
-      {error && (
+      {error && (preview ? (
+        <div className="report-card-preview-unavailable">
+          <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4zM8 11l2.5 2.5L14 10l3 3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <span>Vista previa no disponible</span>
+        </div>
+      ) : (
         <div
           style={{
             position: "absolute",
@@ -438,7 +466,7 @@ function PowerBIEmbed({ report, dark }) {
             Reintentar
           </button>
         </div>
-      )}
+      ))}
 
       <div
         id={containerId}
@@ -447,6 +475,7 @@ function PowerBIEmbed({ report, dark }) {
           height: "100%",
           minHeight: 0,
           overflow: "hidden",
+          pointerEvents: preview ? "none" : "auto",
         }}
       />
     </div>
@@ -2187,6 +2216,9 @@ function Dashboard({ user, onLogout }) {
   const [favorites, setFavorites] = useState([]);
   const [showAdmin, setShowAdmin] = useState(false);
   const [hoveredCard, setHoveredCard] = useState(null);
+  const [previewCardId, setPreviewCardId] = useState(null);
+  const [previewCardVisible, setPreviewCardVisible] = useState(false);
+  const [cachedPreviewIds, setCachedPreviewIds] = useState([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("name");
   const [detailReport, setDetailReport] = useState(null);
@@ -2228,12 +2260,96 @@ function Dashboard({ user, onLogout }) {
   const auditEventsRef = useRef([]);
   const incidentsRef = useRef([]);
   const auditPushDedupeRef = useRef({});
+  const previewOpenTimerRef = useRef(null);
+  const previewCloseTimerRef = useRef(null);
+  const previewExpiryTimersRef = useRef(new Map());
   const sharedSyncRef = useRef({
     reports: 0,
     requests: 0,
     incidents: 0,
     audit: 0,
   });
+
+  const clearPreviewInteractionTimers = useCallback(() => {
+    if (previewOpenTimerRef.current) clearTimeout(previewOpenTimerRef.current);
+    if (previewCloseTimerRef.current) clearTimeout(previewCloseTimerRef.current);
+    previewOpenTimerRef.current = null;
+    previewCloseTimerRef.current = null;
+  }, []);
+
+  const clearPreviewCacheTimers = useCallback(() => {
+    previewExpiryTimersRef.current.forEach(timer => clearTimeout(timer));
+    previewExpiryTimersRef.current.clear();
+  }, []);
+
+  const clearAllPreviewTimers = useCallback(() => {
+    clearPreviewInteractionTimers();
+    clearPreviewCacheTimers();
+  }, [clearPreviewCacheTimers, clearPreviewInteractionTimers]);
+
+  const cacheReportPreview = useCallback((reportId) => {
+    const existingTimer = previewExpiryTimersRef.current.get(reportId);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    const expiryTimer = window.setTimeout(() => {
+      previewExpiryTimersRef.current.delete(reportId);
+      setCachedPreviewIds(current => current.filter(id => id !== reportId));
+      setPreviewCardId(current => current === reportId ? null : current);
+    }, REPORT_PREVIEW_CACHE_TTL_MS);
+    previewExpiryTimersRef.current.set(reportId, expiryTimer);
+
+    setCachedPreviewIds(current => {
+      const ordered = [...current.filter(id => id !== reportId), reportId];
+      const evicted = ordered.slice(0, Math.max(0, ordered.length - REPORT_PREVIEW_CACHE_LIMIT));
+      evicted.forEach(id => {
+        const timer = previewExpiryTimersRef.current.get(id);
+        if (timer) clearTimeout(timer);
+        previewExpiryTimersRef.current.delete(id);
+      });
+      return ordered.slice(-REPORT_PREVIEW_CACHE_LIMIT);
+    });
+  }, []);
+
+  const showCardPreview = useCallback((reportId, immediate = false) => {
+    clearPreviewInteractionTimers();
+    const reveal = () => {
+      cacheReportPreview(reportId);
+      setPreviewCardVisible(false);
+      setPreviewCardId(reportId);
+      window.requestAnimationFrame(() => setPreviewCardVisible(true));
+    };
+    if (immediate) reveal();
+    else previewOpenTimerRef.current = window.setTimeout(reveal, 450);
+  }, [cacheReportPreview, clearPreviewInteractionTimers]);
+
+  const hideCardPreview = useCallback(() => {
+    if (previewOpenTimerRef.current) clearTimeout(previewOpenTimerRef.current);
+    previewOpenTimerRef.current = null;
+    setPreviewCardVisible(false);
+    if (previewCloseTimerRef.current) clearTimeout(previewCloseTimerRef.current);
+    previewCloseTimerRef.current = window.setTimeout(() => {
+      setPreviewCardId(null);
+      previewCloseTimerRef.current = null;
+    }, 180);
+  }, []);
+
+  const toggleTouchPreview = useCallback((reportId, event) => {
+    event.stopPropagation();
+    if (previewCardId === reportId && previewCardVisible) hideCardPreview();
+    else showCardPreview(reportId, true);
+  }, [hideCardPreview, previewCardId, previewCardVisible, showCardPreview]);
+
+  useEffect(() => {
+    preloadPowerBiResources();
+    return () => clearAllPreviewTimers();
+  }, [clearAllPreviewTimers]);
+
+  useEffect(() => {
+    clearAllPreviewTimers();
+    setPreviewCardVisible(false);
+    setPreviewCardId(null);
+    setCachedPreviewIds([]);
+  }, [activeCategory, activeView, clearAllPreviewTimers, previewUserEmail, searchQuery, sortBy, statusFilter]);
 
   const buildUiState = useCallback((overrides = {}) => ({
     app: "datareports",
@@ -2603,6 +2719,10 @@ function Dashboard({ user, onLogout }) {
       showToast("No tenés permiso para ver este reporte en DataReports", "error");
       return;
     }
+    clearAllPreviewTimers();
+    setPreviewCardVisible(false);
+    setPreviewCardId(null);
+    setCachedPreviewIds([]);
     const { pushHistory = true } = options;
     runPortalTransition(() => {
       setReportZoom(100);
@@ -3994,13 +4114,18 @@ function Dashboard({ user, onLogout }) {
             {displayReports.map((report, i) => {
               const colors = categoryColors[report.category] || categoryColors.Comercial;
               const isHovered = hoveredCard === report.id;
+              const isPreview = previewCardId === report.id;
+              const isCachedPreview = cachedPreviewIds.includes(report.id);
               const isFav = favorites.includes(report.id);
               const isMaintenance = report.status === "maintenance";
               return (
-                <div key={report.id} className="premium-report-card motion-stagger-item" onMouseEnter={() => setHoveredCard(report.id)} onPointerMove={handlePremiumPointerMove} onMouseLeave={(event) => { setHoveredCard(null); resetPremiumPointer(event); }}
+                <div key={report.id} className="premium-report-card motion-stagger-item"
+                  onPointerEnter={(event) => { if (event.pointerType === "mouse") { setHoveredCard(report.id); if (!isMaintenance) showCardPreview(report.id); } }}
+                  onPointerMove={handlePremiumPointerMove}
+                  onPointerLeave={(event) => { if (event.pointerType === "mouse") { setHoveredCard(null); hideCardPreview(); } resetPremiumPointer(event); }}
                   style={{
-                    background: theme.bgCard, borderRadius: 20, padding: 0, overflow: "hidden",
-                    border: `1.5px solid ${isHovered ? (dark ? colors.darkText + "44" : colors.accent + "44") : theme.border}`,
+                    background: theme.bgCard, borderRadius: 20, padding: 0, overflow: "hidden", minHeight: 284,
+                    border: `1.5px solid ${isHovered || isPreview ? (dark ? colors.darkText + "44" : colors.accent + "44") : theme.border}`,
                     opacity: isMaintenance ? 0.7 : 1,
                     "--stagger-index": Math.min(i, 8),
                     "--spotlight-color": dark ? `${colors.darkText}12` : `${colors.accent}10`,
@@ -4013,11 +4138,14 @@ function Dashboard({ user, onLogout }) {
                       <div className="premium-card-icon" style={{ width: 46, height: 46, borderRadius: 14, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="20" height="20" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
                       </div>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <button onClick={(e) => toggleFav(report.id, e)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, transition: "transform .2s", transform: isFav ? "scale(1.2)" : "scale(1)" }}>
-                          <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFav ? "#FBBF24" : "none"} stroke={isFav ? "#FBBF24" : theme.textMuted} strokeWidth="1.2"/></svg>
-                        </button>
-                        {report.version && <span style={{ fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "3px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
+                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                         <button onClick={(e) => toggleFav(report.id, e)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, transition: "transform .2s", transform: isFav ? "scale(1.2)" : "scale(1)" }}>
+                           <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFav ? "#FBBF24" : "none"} stroke={isFav ? "#FBBF24" : theme.textMuted} strokeWidth="1.2"/></svg>
+                         </button>
+                         {!isMaintenance && <button type="button" className="report-preview-touch-trigger" onClick={(event) => toggleTouchPreview(report.id, event)} aria-label={`Vista previa de ${report.name}`} aria-expanded={isPreview && previewCardVisible} title="Vista previa">
+                           <svg width="15" height="15" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5z" fill="none" stroke="currentColor" strokeWidth="1.4"/><circle cx="10" cy="10" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.4"/></svg>
+                         </button>}
+                         {report.version && <span style={{ fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "3px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
                         <StatusBadge status={report.status} dark={dark}/>
                       </div>
                     </div>
@@ -4030,7 +4158,7 @@ function Dashboard({ user, onLogout }) {
                   </div>
 
                   {/* Card actions */}
-                  <div style={{ display: "flex", borderTop: `1px solid ${theme.border}` }}>
+                   <div style={{ display: "flex", borderTop: `1px solid ${theme.border}` }}>
                     <button onClick={() => isMaintenance ? openDetailPanel(report) : openReport(report)}
                       style={{
                         flex: 1, padding: "12px", border: "none", borderRight: `1px solid ${theme.border}`,
@@ -4056,9 +4184,30 @@ function Dashboard({ user, onLogout }) {
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                       Detalles
-                    </button>
-                  </div>
-                </div>
+                     </button>
+                   </div>
+
+                   {isCachedPreview && !isMaintenance && (
+                     <div className={`report-card-preview${isPreview && previewCardVisible ? " is-visible" : ""}`} style={{ background: theme.bgCard }}>
+                       <div className="report-card-preview-media" style={{ background: dark ? "#0D0F14" : "#F3F6FA", borderBottom: `1px solid ${theme.border}` }}>
+                         <PowerBIEmbed report={report} dark={dark} preview/>
+                         <button type="button" className="report-card-preview-close" onClick={(event) => { event.stopPropagation(); hideCardPreview(); }} aria-label="Cerrar vista previa" title="Cerrar vista previa">
+                           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                         </button>
+                       </div>
+                       <div className="report-card-preview-meta">
+                         <div style={{ minWidth: 0 }}>
+                           <p style={{ color: theme.text, fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</p>
+                           <p style={{ color: theme.textMuted, fontSize: 10, marginTop: 3 }}>{report.version ? `Versión ${report.version}` : "Versión no informada"}{(report.releasedAt || report.updatedAt) ? ` · Actualizado ${formatReleaseDate(report.releasedAt || report.updatedAt)}` : ""}</p>
+                         </div>
+                         <button type="button" className="report-card-preview-open" onClick={(event) => { event.stopPropagation(); openReport(report); }} style={{ color: T.teal }}>
+                           <span>Abrir reporte</span>
+                           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                         </button>
+                       </div>
+                     </div>
+                   )}
+                 </div>
               );
             })}
 
