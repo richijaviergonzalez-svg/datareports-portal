@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Hourglass } from "ldrs/react";
+import "ldrs/react/Hourglass.css";
+import "./styles/motion.css";
 import {
   ALL_CATEGORIES,
   DEFAULT_REPORTS,
@@ -10,6 +13,7 @@ import {
   isValidUuid,
   normalizeReport,
   normalizeReports,
+  normalizeVersionHistory,
   parseUrl,
 } from "./features/reports/reportModel.js";
 import {
@@ -55,12 +59,22 @@ import {
   fetchBiAuditEvents,
   fetchBiIncidents,
   fetchBiRequests,
+  fetchReportSubscriptions,
   fetchReportsCatalog,
+  fetchReportsHistory,
+  rollbackReportsCatalog,
   saveBiIncidents,
+  saveReportSubscriptions,
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
 import { loadPortalState, savePortalState } from "./lib/storage.js";
+import {
+  getReportTransitionName,
+  handlePremiumPointerMove,
+  resetPremiumPointer,
+  runPortalTransition,
+} from "./lib/motion.js";
 
 /*
 ╔══════════════════════════════════════════════════════════════╗
@@ -118,9 +132,54 @@ const statusConfig = {
 
 
 const StatusBadge = ({ status, dark }) => {
+  if (!status || status === "live") return null;
   const s = statusConfig[status] || statusConfig.live;
   return (
     <div style={{ padding: "4px 12px", borderRadius: 20, fontSize: 10, fontWeight: 500, background: dark ? s.darkBg : s.lightBg, color: dark ? s.darkText : s.lightText, whiteSpace: "nowrap" }}>{s.label}</div>
+  );
+};
+
+const VersionBadge = ({ version, dark }) => version ? (
+  <span style={{ fontSize: 10, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "4px 9px", borderRadius: 7, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap" }}>v{version}</span>
+) : null;
+
+const formatReleaseDate = (value) => {
+  if (!value) return "";
+  const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("es-PY");
+};
+
+const ReportVersionPanel = ({ report, dark }) => {
+  if (!report?.version) return null;
+  const theme = dark ? darkTheme : lightTheme;
+  const history = normalizeVersionHistory(report.versionHistory).slice(1, 6);
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ padding: "15px 16px", borderRadius: 14, background: dark ? "#2563EB0F" : "#F5F8FF", border: `1px solid ${dark ? "#2563EB30" : "#D9E5FF"}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: report.releaseNotes ? 7 : 0 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: T.teal, textTransform: "uppercase", letterSpacing: .8 }}>Novedades de v{report.version}</p>
+          {report.releasedAt && <span style={{ fontSize: 10, color: theme.textMuted }}>{formatReleaseDate(report.releasedAt)}</span>}
+        </div>
+        {report.releaseNotes && <p style={{ fontSize: 12, color: theme.text, lineHeight: 1.65, whiteSpace: "pre-line" }}>{report.releaseNotes}</p>}
+      </div>
+      {history.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 9 }}>Historial de versiones</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {history.map(entry => (
+              <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, padding: "10px 12px", borderRadius: 11, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: T.teal, fontFamily: "'JetBrains Mono', monospace" }}>v{entry.version}</span>
+                <div>
+                  <p style={{ fontSize: 11, color: theme.text, lineHeight: 1.45 }}>{entry.notes || "Actualización del reporte"}</p>
+                  {entry.releasedAt && <p style={{ fontSize: 9, color: theme.textMuted, marginTop: 3 }}>{formatReleaseDate(entry.releasedAt)}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -323,31 +382,35 @@ function PowerBIEmbed({ report, dark }) {
       }}
     >
       {loading && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            background: dark ? "#0D0F14" : "#F9FAFB",
-            zIndex: 5,
-          }}
-        >
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              border: `3px solid ${dark ? "#2A2F3C" : "#E5E7EB"}`,
-              borderTopColor: "#0D9488",
-              borderRadius: "50%",
-              animation: "spin 1s linear infinite",
-              marginBottom: 16,
-            }}
-          />
-          <p style={{ fontSize: 13, color: dark ? "#8B93A7" : "#6B7280" }}>Cargando reporte...</p>
-          <p style={{ fontSize: 11, color: dark ? "#5C6478" : "#9CA3AF", marginTop: 4 }}>{report.name}</p>
+        <div className="report-loading-shell" aria-live="polite" aria-label={`Cargando ${report.name}`} style={{
+          background: dark ? "#0D0F14" : "#F9FAFB",
+          "--skeleton-base": dark ? "#1A1F29" : "#E9EEF5",
+          "--skeleton-highlight": dark ? "#252C39" : "#F8FAFC",
+          "--skeleton-border": dark ? "#2A2F3C" : "#E3E8F0",
+          "--skeleton-surface": dark ? "rgba(30,34,45,.78)" : "rgba(255,255,255,.78)",
+        }}>
+          <div className="report-loading-toolbar"/>
+          <div className="report-loading-panel">
+            <div className="report-loading-chart">
+              {[42, 68, 54, 82, 61, 74].map((height, index) => <span key={index} className="report-loading-tile" style={{ height: `${height}%` }}/>) }
+            </div>
+            <div className="report-loading-copy">
+              <div className="report-loading-line" style={{ width: "58%" }}/>
+              <div className="report-loading-line" style={{ width: "86%" }}/>
+              <div className="report-loading-line" style={{ width: "72%" }}/>
+              <div className="report-loading-line" style={{ width: "94%", height: 80 }}/>
+              <p style={{ marginTop: "auto", fontSize: 11, color: dark ? "#6B7288" : "#98A2B3" }}>Preparando {report.name}...</p>
+            </div>
+          </div>
+          <div className="report-loading-focus">
+            <div className="portal-hourglass-loader" role="status" aria-label={`Abriendo ${report.name}`}>
+              <Hourglass size={40} bgOpacity={0.1} speed={1.75} color={dark ? "#E8ECF4" : "black"}/>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: dark ? "#E8ECF4" : "#111827" }}>Abriendo reporte</p>
+              <p style={{ maxWidth: 260, marginTop: 3, fontSize: 10, color: dark ? "#8B93A7" : "#667085", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -484,7 +547,7 @@ function LoginScreen({ onLogin }) {
 // ========================
 // ADMIN PANEL
 // ========================
-function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser }) {
+function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const [list, setList] = useState(normalizeReports(reports));
   const [editing, setEditing] = useState(null);
@@ -494,6 +557,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live",
     owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service",
     refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "",
+    version: "", releaseNotes: "", releasedAt: "", versionHistory: [],
     visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "",
   });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -502,6 +566,12 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [previewEmail, setPreviewEmail] = useState("");
+  const [historyEntries, setHistoryEntries] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const editorScrollRef = useRef(null);
 
   useEffect(() => setList(normalizeReports(reports)), [reports]);
 
@@ -513,7 +583,8 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     setUrlInput("");
     setParsed(null);
     setTestResult(null);
-    setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "" });
+    setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", version: "", releaseNotes: "", releasedAt: "", versionHistory: [], visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "" });
+    requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
   };
 
   const handleUrlPaste = (val) => {
@@ -528,37 +599,68 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     if (!form.id || !isValidUuid(form.id)) return "El Report ID no tiene formato UUID válido.";
     if (form.groupId && !isValidUuid(form.groupId)) return "El Workspace ID debe ser UUID válido o quedar vacío si el reporte está en My Workspace.";
     if (!form.name.trim()) return "El nombre del reporte es obligatorio.";
+    if (form.version && !/^[a-z0-9][a-z0-9._-]{0,19}$/i.test(form.version.trim())) return "La versión debe usar letras, números, puntos o guiones (máximo 20 caracteres).";
+    if (form.releaseNotes.trim() && !form.version.trim()) return "Indicá una versión para publicar las notas de cambios.";
     if (list.some(r => r.id === form.id && r.id !== editing)) return "Ya existe un reporte configurado con ese Report ID.";
     if (form.visibilityMode === "emails" && !form.allowedEmails.trim()) return "Para visibilidad por usuarios específicos, cargá al menos un correo.";
     if (form.visibilityMode === "domains" && !form.allowedDomains.trim()) return "Para visibilidad por dominio, cargá al menos un dominio.";
     return "";
   };
 
-  const makeReportFromForm = () => normalizeReport({
-    id: form.id,
-    groupId: form.groupId,
-    name: form.name,
-    category: form.category,
-    icon: form.icon,
-    status: form.status,
-    description: form.description,
-    owner: form.owner,
-    audience: form.audience,
-    accessLevel: form.accessLevel,
-    dataSource: form.dataSource,
-    refreshFrequency: form.refreshFrequency,
-    criticality: form.criticality,
-    technicalNotes: form.technicalNotes,
-    originalUrl: form.originalUrl || urlInput,
-    visibilityMode: form.visibilityMode,
-    allowedEmails: form.allowedEmails,
-    allowedDomains: form.allowedDomains,
-    visibilityNote: form.visibilityNote,
-    sortOrder: form.sortOrder || list.length + 1,
-    createdAt: list.find(r => r.id === editing)?.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    updatedBy: currentUser?.email || "admin",
-  }, list.length);
+  const makeReportFromForm = (statusOverride) => {
+    const previousReport = list.find(r => r.id === editing);
+    const version = form.version.trim();
+    const releaseNotes = form.releaseNotes.trim();
+    const releasedAt = form.releasedAt || "";
+    const existingHistory = normalizeVersionHistory(previousReport?.versionHistory || form.versionHistory);
+    const versionChanged = Boolean(version) && (
+      !previousReport ||
+      version !== (previousReport.version || "") ||
+      releaseNotes !== (previousReport.releaseNotes || "") ||
+      releasedAt !== (previousReport.releasedAt || "")
+    );
+    const versionHistory = versionChanged
+      ? [{
+          id: `release-${Date.now()}`,
+          version,
+          notes: releaseNotes,
+          releasedAt: releasedAt || new Date().toISOString().slice(0, 10),
+          publishedBy: currentUser?.email || "admin",
+        }, ...existingHistory].slice(0, 20)
+      : existingHistory;
+    const currentReleasedAt = versionChanged ? versionHistory[0]?.releasedAt || releasedAt : releasedAt;
+
+    return normalizeReport({
+      id: form.id,
+      groupId: form.groupId,
+      name: form.name,
+      category: form.category,
+      icon: form.icon,
+      status: statusOverride || form.status,
+      description: form.description,
+      owner: form.owner,
+      audience: form.audience,
+      accessLevel: form.accessLevel,
+      dataSource: form.dataSource,
+      refreshFrequency: form.refreshFrequency,
+      criticality: form.criticality,
+      technicalNotes: form.technicalNotes,
+      originalUrl: form.originalUrl || urlInput,
+      version,
+      releaseNotes,
+      releasedAt: currentReleasedAt,
+      versionHistory,
+      visibilityMode: form.visibilityMode,
+      allowedEmails: form.allowedEmails,
+      allowedDomains: form.allowedDomains,
+      visibilityNote: form.visibilityNote,
+      sortOrder: form.sortOrder || list.length + 1,
+      createdAt: previousReport?.createdAt || new Date().toISOString(),
+      createdBy: previousReport?.createdBy || currentUser?.email || "admin",
+      updatedAt: new Date().toISOString(),
+      updatedBy: currentUser?.email || "admin",
+    }, list.length);
+  };
 
   const persistList = async (updated, msg) => {
     const optimisticList = normalizeReports(updated);
@@ -582,10 +684,10 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     }
   };
 
-  const handleAdd = async () => {
+  const handleAdd = async (statusOverride) => {
     const error = validateForm();
     if (error) return showError(error);
-    const newReport = makeReportFromForm();
+    const newReport = makeReportFromForm(statusOverride);
     const updated = [...list, newReport];
     const ok = await persistList(updated, `"${newReport.name}" agregado al catálogo`);
     if (ok) resetForm();
@@ -598,6 +700,10 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
       id: r.id, groupId: r.groupId || "", name: r.name, category: r.category, icon: r.icon, description: r.description || "", status: r.status,
       owner: r.owner || "Equipo BI", audience: r.audience || "Corporativo", accessLevel: r.accessLevel || "Corporativo", dataSource: r.dataSource || "Power BI Service",
       refreshFrequency: r.refreshFrequency || "Según dataset", criticality: r.criticality || "media", technicalNotes: r.technicalNotes || "", originalUrl: r.originalUrl || "", sortOrder: r.sortOrder || "",
+      version: r.version || "",
+      releaseNotes: r.releaseNotes || "",
+      releasedAt: r.releasedAt || "",
+      versionHistory: normalizeVersionHistory(r.versionHistory),
       visibilityMode: r.visibilityMode || "all",
       allowedEmails: (r.allowedEmails || []).join(", "),
       allowedDomains: (r.allowedDomains || []).join(", "),
@@ -606,15 +712,16 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     setUrlInput(r.originalUrl || "");
     setParsed(r.id ? { reportId: r.id, groupId: r.groupId || "" } : null);
     setTestResult(null);
+    requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
   };
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (statusOverride) => {
     const error = validateForm();
     if (error) return showError(error);
-    const updatedReport = makeReportFromForm();
+    const updatedReport = makeReportFromForm(statusOverride);
     const updated = list.map(r => r.id === editing ? updatedReport : r);
     const ok = await persistList(updated, "Reporte actualizado");
-    if (ok) resetForm();
+    if (ok) handleEdit(updatedReport);
   };
 
   const handleDelete = async (id) => {
@@ -646,14 +753,54 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     }
   };
 
+  const openHistory = async () => {
+    setShowHistory(true);
+    if (!onLoadHistory) return;
+    setHistoryLoading(true);
+    try {
+      const result = await onLoadHistory();
+      setHistoryEntries(Array.isArray(result?.history) ? result.history : []);
+    } catch (error) {
+      showError(error.message || "No se pudo cargar el historial.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const restoreSnapshot = async (snapshot) => {
+    if (!onRollback || !snapshot?.id) return;
+    if (!window.confirm(`¿Restaurar el catálogo de ${new Date(snapshot.createdAt).toLocaleString("es-PY")}? El estado actual también quedará guardado en el historial.`)) return;
+    setSaving(true);
+    try {
+      const result = await onRollback(snapshot.id);
+      const restored = normalizeReports(result?.reports || []);
+      setList(restored);
+      setShowHistory(false);
+      resetForm();
+      showSuccess(`Catálogo restaurado: ${restored.length} reportes`);
+    } catch (error) {
+      showError(error.message || "No se pudo restaurar el catálogo.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, fontSize: 13, fontFamily: "'Outfit', system-ui", outline: "none" };
   const selectStyle = { ...inputStyle, cursor: "pointer", appearance: "none", WebkitAppearance: "none" };
   const mutedLabel = { fontSize: 10, color: theme.textMuted, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: .8, fontWeight: 500 };
+  const visibleCatalog = list.filter(report => {
+    const query = catalogSearch.trim().toLowerCase();
+    if (!query) return true;
+    return [report.name, report.category, report.owner, report.version].some(value => String(value || "").toLowerCase().includes(query));
+  });
+  const previewVisibleReports = previewEmail.trim()
+    ? list.filter((report) => canUserViewReport(report, { email: previewEmail.trim() }))
+    : [];
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 16 }}>
-      <div style={{ width: 980, maxHeight: "92vh", background: theme.bgCard, borderRadius: 24, border: `1px solid ${theme.border}`, overflow: "hidden", display: "flex", flexDirection: "column", animation: "fadeUp .3s ease-out" }}>
-        <div style={{ padding: "20px 28px", borderBottom: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+    <div style={standalone ? { position: "relative", width: "100%" } : { position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 16 }}>
+      <div className="admin-shell" style={{ width: standalone ? "100%" : "min(1440px, 96vw)", height: standalone ? "calc(100vh - 138px)" : "min(920px, 94vh)", minHeight: standalone ? 620 : undefined, background: theme.bgCard, borderRadius: 16, border: `1px solid ${theme.border}`, overflow: "hidden", display: "flex", flexDirection: "column", animation: "scaleIn .24s ease-out", position: "relative", boxShadow: standalone ? "none" : `0 30px 90px ${dark ? "rgba(0,0,0,.6)" : "rgba(15,23,42,.22)"}` }}>
+        <div style={{ padding: "16px 22px", borderBottom: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0, minHeight: 72 }}>
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>Gestor de Catálogo BI</h2>
             <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>Reportes centralizados, gobierno y validación de Power BI</p>
@@ -662,22 +809,38 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
             <span style={{ fontSize: 11, fontWeight: 600, color: reportSyncStatus === "shared" ? T.teal : "#F59E0B", background: reportSyncStatus === "shared" ? (dark ? T.teal + "18" : T.tealBg) : (dark ? "#F59E0B18" : "#FFFBEB"), padding: "6px 12px", borderRadius: 999 }}>
               {reportSyncMessage}
             </span>
-            <button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, fontSize: 18 }}>×</button>
+            <button onClick={openHistory} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 12px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, cursor: saving ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }} title="Consultar versiones anteriores del catálogo">Historial</button>
+            <button onClick={resetForm} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 13px", borderRadius: 10, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, cursor: saving ? "wait" : "pointer", fontSize: 12, fontWeight: 700 }}>
+              <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+              Nuevo reporte
+            </button>
+            <button onClick={onClose} style={{ height: 36, padding: standalone ? "0 12px" : 0, width: standalone ? "auto" : 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, fontSize: standalone ? 11 : 18, fontWeight: 700 }}>{standalone ? "Volver al portal" : "×"}</button>
           </div>
         </div>
 
+        {saving && <div style={{ position: "absolute", left: 0, right: 0, top: 70, height: 3, zIndex: 30, overflow: "hidden", background: dark ? "#2563EB18" : "#DBEAFE" }}><div className="admin-save-progress" style={{ width: "42%", height: "100%", background: `linear-gradient(90deg, ${T.teal}, ${T.tealLight})`, borderRadius: 99 }}/></div>}
+
         {(successMsg || errorMsg) && (
-          <div style={{ margin: "12px 28px 0", padding: "10px 16px", borderRadius: 12, background: successMsg ? (dark ? "#06543520" : "#D1FAE5") : (dark ? "#7F1D1D20" : "#FEF2F2"), border: `1px solid ${successMsg ? (dark ? "#065F4640" : "#A7F3D0") : (dark ? "#7F1D1D40" : "#FECACA")}`, color: successMsg ? (dark ? "#34D399" : "#065F46") : (dark ? "#F87171" : "#991B1B"), fontSize: 12, fontWeight: 500 }}>
+          <div style={{ position: "absolute", top: 82, right: 24, zIndex: 40, maxWidth: 420, padding: "11px 16px", borderRadius: 11, background: successMsg ? (dark ? "#12372E" : "#ECFDF5") : (dark ? "#3B1D22" : "#FEF2F2"), border: `1px solid ${successMsg ? (dark ? "#34D39955" : "#A7F3D0") : (dark ? "#F8717155" : "#FECACA")}`, color: successMsg ? (dark ? "#34D399" : "#065F46") : (dark ? "#F87171" : "#991B1B"), fontSize: 12, fontWeight: 600, boxShadow: "0 12px 30px rgba(0,0,0,.16)", animation: "slideInRight .22s ease-out" }}>
             {successMsg || errorMsg}
           </div>
         )}
 
-        <div style={{ flex: 1, overflow: "auto", padding: 28 }}>
-          <div style={{ marginBottom: 28, padding: 24, borderRadius: 18, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, color: T.teal, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        {saving && (
+          <div style={{ position: "absolute", top: 84, right: 24, zIndex: 35, display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 11, background: dark ? "#172033" : "#FFFFFF", border: `1px solid ${T.teal}55`, color: theme.text, boxShadow: "0 12px 30px rgba(0,0,0,.16)", animation: "scaleIn .2s ease-out" }}>
+            <span style={{ width: 16, height: 16, border: `2px solid ${T.teal}33`, borderTopColor: T.teal, borderRadius: "50%", animation: "spin .65s linear infinite" }}/>
+            <span style={{ fontSize: 11, fontWeight: 700 }}>Publicando catálogo...</span>
+          </div>
+        )}
+
+        <div className="admin-workspace" aria-busy={saving} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "430px minmax(0, 1fr)", overflow: "hidden", pointerEvents: saving ? "none" : "auto" }}>
+          <div ref={editorScrollRef} className="admin-editor" style={{ gridColumn: 2, gridRow: 1, overflowY: "auto", minHeight: 0, padding: 28, background: theme.bgSurface, position: "relative" }}>
+            <div style={{ maxWidth: 920, margin: "0 auto" }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.text, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: T.teal }}><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="8" y1="5" x2="8" y2="11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><line x1="5" y1="8" x2="11" y2="8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               {editing ? "Editar reporte" : "Agregar nuevo reporte"}
             </h3>
+            <p style={{ fontSize: 11, color: theme.textMuted, marginBottom: 20 }}>{editing ? "Los cambios se publican en el catálogo compartido al guardar." : "Completá la información para incorporar un tablero al catálogo."}</p>
 
             <div style={{ marginBottom: 16 }}>
               <label style={mutedLabel}>Paso 1 — URL del reporte de Power BI</label>
@@ -707,6 +870,24 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
               <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Breve descripción del reporte..." style={{ ...inputStyle, minHeight: 68, resize: "vertical" }}/>
             </div>
 
+            <div style={{ marginBottom: 14, padding: 16, borderRadius: 16, background: dark ? "#2563EB0B" : "#F8FAFF", border: `1px solid ${dark ? "#2563EB2A" : "#DCE8FF"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ ...mutedLabel, color: T.teal }}>Versión y novedades</label>
+                  <p style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>Se muestra separada del título y cada publicación queda registrada en el historial.</p>
+                </div>
+                {form.version && <span style={{ fontSize: 11, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "5px 10px", borderRadius: 8, fontFamily: "'JetBrains Mono', monospace" }}>v{form.version}</span>}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <div><label style={mutedLabel}>Versión actual</label><input value={form.version} onChange={e => setForm({ ...form, version: e.target.value })} placeholder="Ej: 5.2" maxLength={20} style={{ ...inputStyle, fontFamily: "'JetBrains Mono', monospace" }}/></div>
+                <div><label style={mutedLabel}>Fecha de publicación</label><input type="date" value={form.releasedAt} onChange={e => setForm({ ...form, releasedAt: e.target.value })} style={inputStyle}/></div>
+              </div>
+              <label style={mutedLabel}>Mejoras de esta versión</label>
+              <textarea value={form.releaseNotes} onChange={e => setForm({ ...form, releaseNotes: e.target.value })} placeholder="Ej: Nuevo filtro por sucursal, mejora de rendimiento y ajuste del cálculo de margen." maxLength={600} style={{ ...inputStyle, minHeight: 76, resize: "vertical" }}/>
+              {form.versionHistory.length > 0 && <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 8 }}>{form.versionHistory.length} {form.versionHistory.length === 1 ? "versión anterior registrada" : "versiones anteriores registradas"}</p>}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 12px" }}><span style={{ fontSize: 10, fontWeight: 700, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .9 }}>Gobierno y operación</span><span style={{ height: 1, flex: 1, background: theme.border }}/></div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
               <div><label style={mutedLabel}>Responsable</label><input value={form.owner} onChange={e => setForm({ ...form, owner: e.target.value })} style={inputStyle}/></div>
               <div><label style={mutedLabel}>Audiencia</label><input value={form.audience} onChange={e => setForm({ ...form, audience: e.target.value })} placeholder="Retail, Dirección, Corporativo..." style={inputStyle}/></div>
@@ -758,6 +939,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
               <input value={form.technicalNotes} onChange={e => setForm({ ...form, technicalNotes: e.target.value })} placeholder="Observaciones técnicas para BI/admin" style={inputStyle}/>
             </div>
 
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 12px" }}><span style={{ fontSize: 10, fontWeight: 700, color: theme.textMuted, textTransform: "uppercase", letterSpacing: .9 }}>Presentación y estado</span><span style={{ height: 1, flex: 1, background: theme.border }}/></div>
             <div style={{ marginBottom: 16 }}>
               <label style={mutedLabel}>Ícono</label>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -782,40 +964,75 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10, position: "sticky", bottom: -28, margin: "20px -28px -28px", padding: "16px 28px", background: dark ? "rgba(30,34,45,.96)" : "rgba(244,247,251,.96)", backdropFilter: "blur(12px)", borderTop: `1px solid ${theme.border}`, zIndex: 10 }}>
               <button onClick={testConnection} disabled={testing || saving} style={{ padding: "12px 18px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, fontSize: 13, fontWeight: 600, cursor: testing ? "wait" : "pointer" }}>{testing ? "Validando..." : "Probar conexión"}</button>
-              <button onClick={editing ? handleSaveEdit : handleAdd} disabled={saving} style={{ flex: 1, padding: "12px 20px", borderRadius: 14, border: "none", background: saving ? theme.border : T.teal, color: saving ? theme.textMuted : "white", fontSize: 14, fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
-                {saving ? "Guardando..." : editing ? "Guardar cambios" : "Agregar reporte al catálogo"}
+              <button onClick={() => editing ? handleSaveEdit("draft") : handleAdd("draft")} disabled={saving} style={{ padding: "12px 18px", borderRadius: 14, border: `1px solid #F59E0B55`, background: dark ? "#F59E0B12" : "#FFFBEB", color: "#D97706", fontSize: 12, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>Guardar borrador</button>
+              <button onClick={() => editing ? handleSaveEdit(form.status === "maintenance" ? "maintenance" : "live") : handleAdd(form.status === "maintenance" ? "maintenance" : "live")} disabled={saving} style={{ flex: 1, padding: "12px 20px", borderRadius: 14, border: "none", background: saving ? theme.border : T.teal, color: saving ? theme.textMuted : "white", fontSize: 14, fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9 }}>
+                  {saving && (
+                    <span style={{ width: 15, height: 15, border: `2px solid ${theme.textMuted}55`, borderTopColor: theme.textMuted, borderRadius: "50%", animation: "spin .65s linear infinite" }}/>
+                  )}
+                  {saving ? "Publicando cambios..." : form.status === "maintenance" ? "Guardar en mantenimiento" : editing ? "Guardar y publicar" : "Agregar y publicar"}
+                </span>
               </button>
               {editing && <button onClick={resetForm} disabled={saving} style={{ padding: "12px 22px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, fontSize: 13, cursor: "pointer" }}>Cancelar</button>}
             </div>
           </div>
+          </div>
 
-          <h3 style={{ fontSize: 13, fontWeight: 600, color: theme.textSecondary, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>Reportes configurados ({list.length})</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {list.map(report => {
+          <div className="admin-catalog" style={{ gridColumn: 1, gridRow: 1, minHeight: 0, overflowY: "auto", borderRight: `1px solid ${theme.border}`, background: theme.bgCard, padding: 16 }}>
+            <div style={{ position: "sticky", top: -16, zIndex: 8, background: theme.bgCard, padding: "4px 0 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                <div>
+                  <h3 style={{ fontSize: 12, fontWeight: 700, color: theme.text, textTransform: "uppercase", letterSpacing: .8 }}>Catálogo</h3>
+                  <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>{list.length} reportes configurados</p>
+                </div>
+                <span style={{ fontSize: 10, color: T.teal, background: dark ? T.teal + "14" : T.tealBg, padding: "4px 8px", borderRadius: 7 }}>{visibleCatalog.length} visibles</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 10, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
+                <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted, flexShrink: 0 }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.4" fill="none"/><path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+                <input value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)} placeholder="Buscar reporte..." style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: theme.text, fontSize: 12, fontFamily: "'Outfit', system-ui" }}/>
+                {catalogSearch && <button onClick={() => setCatalogSearch("")} style={{ border: "none", background: "transparent", color: theme.textMuted, cursor: "pointer", fontSize: 14 }}>×</button>}
+              </div>
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 11, background: dark ? T.teal + "08" : "#F8FAFF", border: `1px solid ${theme.border}` }}>
+                <label style={{ ...mutedLabel, marginBottom: 6 }}>Vista previa de permisos</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input type="email" value={previewEmail} onChange={e => setPreviewEmail(e.target.value)} placeholder="usuario@empresa.com" style={{ ...inputStyle, minWidth: 0, padding: "8px 9px", fontSize: 10 }}/>
+                  <button onClick={() => previewEmail.trim() && onPreviewUser?.(previewEmail.trim())} disabled={!previewEmail.trim()} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 9, padding: "0 9px", cursor: previewEmail.trim() ? "pointer" : "not-allowed", fontSize: 10, fontWeight: 700 }}>Ver como</button>
+                </div>
+                {previewEmail.trim() && <p style={{ marginTop: 7, fontSize: 10, color: theme.textMuted }}><strong style={{ color: theme.text }}>{previewVisibleReports.length}</strong> de {list.length} reportes visibles</p>}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {visibleCatalog.map(report => {
               const colors = categoryColors[report.category] || categoryColors.Comercial;
+              const active = editing === report.id;
               return (
-                <div key={report.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", borderRadius: 16, background: theme.bgCard, border: `1px solid ${editing === report.id ? T.teal : theme.border}`, transition: "all .2s" }}>
-                  <div style={{ width: 40, height: 40, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <svg width="18" height="18" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
+                <div key={report.id} onClick={() => handleEdit(report)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 10px", borderRadius: 11, background: active ? (dark ? T.teal + "12" : T.tealBg) : theme.bgCard, border: `1px solid ${active ? T.teal + "66" : theme.border}`, transition: "background .18s, border-color .18s, transform .18s", cursor: "pointer", position: "relative", transform: active ? "translateX(2px)" : "none" }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg width="16" height="16" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{report.name}</div>
-                    <div style={{ fontSize: 10, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>ID: {report.id}</div>
-                    <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.owner || "Equipo BI"} · {report.refreshFrequency || "Según dataset"} · Criticidad {report.criticality || "media"} · Visibilidad: {getVisibilityLabel(report)}</div>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 6, minWidth: 0 }}>
+                      <div title={report.name} style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.3, fontWeight: 700, color: theme.text, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{report.name}</div>
+                      {report.version && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "2px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, minWidth: 0 }}>
+                      <span style={{ fontSize: 9, color: dark ? colors.darkText : colors.accent, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.category}</span>
+                      <span style={{ width: 3, height: 3, borderRadius: 99, background: theme.textMuted }}/>
+                      <span style={{ fontSize: 9, color: report.status === "live" ? "#10B981" : report.status === "draft" ? "#F59E0B" : "#EF4444" }}>{statusConfig[report.status]?.label || "Activo"}</span>
+                    </div>
                   </div>
-                  <span style={{ fontSize: 10, fontWeight: 600, color: dark ? colors.darkText : colors.accent, background: dark ? colors.darkBg : colors.bg, padding: "3px 10px", borderRadius: 8 }}>{report.category}</span>
-                  <StatusBadge status={report.status} dark={dark}/>
-                  <button onClick={() => handleEdit(report)} style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <button onClick={(e) => { e.stopPropagation(); handleEdit(report); }} title="Editar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/></svg>
                   </button>
                   <div style={{ position: "relative" }}>
-                    <button onClick={() => setDeleteConfirm(deleteConfirm === report.id ? null : report.id)} style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(deleteConfirm === report.id ? null : report.id); }} title="Eliminar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: "#EF4444" }}><path d="M3 4h10M5.5 4V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1m1.5 0l-.5 9a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1L4 4" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
                     </button>
                     {deleteConfirm === report.id && (
-                      <div style={{ position: "absolute", top: 38, right: 0, width: 230, padding: 16, borderRadius: 14, background: theme.bgCard, border: `1px solid ${theme.border}`, boxShadow: `0 8px 24px ${dark ? "rgba(0,0,0,.4)" : "rgba(0,0,0,.1)"}`, zIndex: 10 }}>
+                      <div onClick={e => e.stopPropagation()} style={{ position: "absolute", top: 36, right: 0, width: 230, padding: 14, borderRadius: 12, background: theme.bgCard, border: `1px solid ${theme.border}`, boxShadow: `0 8px 24px ${dark ? "rgba(0,0,0,.4)" : "rgba(0,0,0,.1)"}`, zIndex: 12 }}>
                         <p style={{ fontSize: 12, color: theme.text, marginBottom: 10 }}>¿Eliminar "{report.name}" del catálogo compartido?</p>
                         <div style={{ display: "flex", gap: 8 }}>
                           <button onClick={() => handleDelete(report.id)} style={{ flex: 1, padding: "8px", borderRadius: 10, border: "none", background: "#EF4444", color: "white", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Eliminar</button>
@@ -827,8 +1044,31 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
                 </div>
               );
             })}
+            {visibleCatalog.length === 0 && <div style={{ padding: "32px 12px", textAlign: "center", color: theme.textMuted, fontSize: 11 }}>No encontramos reportes con esa búsqueda.</div>}
+            </div>
           </div>
         </div>
+        {showHistory && (
+          <div onClick={() => setShowHistory(false)} style={{ position: "absolute", inset: 0, zIndex: 60, background: "rgba(0,0,0,.42)", display: "flex", justifyContent: "flex-end" }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 420, maxWidth: "92%", height: "100%", background: theme.bgCard, borderLeft: `1px solid ${theme.border}`, padding: 20, overflowY: "auto", animation: "slideInRight .22s ease-out" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+                <div><h3 style={{ fontSize: 15, color: theme.text }}>Historial del catálogo</h3><p style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }}>Cada publicación conserva una copia recuperable.</p></div>
+                <button onClick={() => setShowHistory(false)} style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textMuted, cursor: "pointer" }}>×</button>
+              </div>
+              {historyLoading ? <p style={{ color: theme.textMuted, fontSize: 12 }}>Cargando historial...</p> : historyEntries.length === 0 ? <p style={{ color: theme.textMuted, fontSize: 12 }}>Todavía no hay snapshots disponibles.</p> : (
+                <div style={{ display: "grid", gap: 9 }}>
+                  {historyEntries.map((entry) => (
+                    <div key={entry.id} style={{ padding: 13, borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><strong style={{ fontSize: 12, color: theme.text }}>{entry.reportCount} reportes</strong><span style={{ fontSize: 9, color: theme.textMuted }}>{new Date(entry.createdAt).toLocaleString("es-PY")}</span></div>
+                      <p style={{ fontSize: 10, color: theme.textMuted, margin: "5px 0 10px" }}>{entry.reason} · {entry.createdBy || "Administrador"}</p>
+                      <button onClick={() => restoreSnapshot(entry)} disabled={saving} style={{ width: "100%", padding: "8px 10px", borderRadius: 9, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "10" : T.tealBg, color: T.teal, cursor: saving ? "wait" : "pointer", fontSize: 10, fontWeight: 700 }}>Restaurar esta versión</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -839,15 +1079,6 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
 // ========================
 const globalStyles = `
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-@keyframes fadeUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
-@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
-@keyframes slideInLeft { from { opacity:0; transform:translateX(-20px); } to { opacity:1; transform:translateX(0); } }
-@keyframes slideInRight { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
-@keyframes spin { to { transform:rotate(360deg); } }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
-@keyframes scaleIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
-@keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
-@keyframes breathe { 0%,100% { box-shadow: 0 0 0 0 rgba(13,148,136,0); } 50% { box-shadow: 0 0 0 6px rgba(13,148,136,0.08); } }
 * { box-sizing:border-box; margin:0; padding:0; }
 .powerbi-embed-shell iframe,
 .powerbi-embed-shell > div,
@@ -861,6 +1092,7 @@ const globalStyles = `
 ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
 @media (max-width: 1024px) {
   .requests-layout { grid-template-columns: 1fr !important; }
+  .admin-workspace { grid-template-columns: 350px minmax(0, 1fr) !important; }
 }
 @media (max-width: 768px) {
   .hide-mobile { display: none !important; }
@@ -887,6 +1119,10 @@ const globalStyles = `
   .topbar-search { display: none !important; }
   .metrics-grid { grid-template-columns: 1fr !important; }
   .requests-layout { grid-template-columns: 1fr !important; }
+  .admin-shell { width:100vw !important; height:100vh !important; max-height:none !important; border-radius:0 !important; }
+  .admin-workspace { display:flex !important; flex-direction:column !important; overflow:auto !important; }
+  .admin-catalog { order:1; min-height:220px !important; max-height:280px; border-right:none !important; border-bottom:1px solid rgba(148,163,184,.22); }
+  .admin-editor { order:2; overflow:visible !important; padding:20px !important; }
 }
 @media (min-width: 769px) {
   .mobile-menu-btn { display: none !important; }
@@ -910,6 +1146,7 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
     { id: "recent", icon: <svg width="18" height="18" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>, label: "Recientes" },
     { id: "requests", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 6h6M5 8.5h4M5 11h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>, label: "Solicitudes BI", count: requests.filter(r => isUserAdmin || r.userEmail === user?.email).length },
     ...(isUserAdmin ? [
+      { id: "admin", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M6.5 1.5h3l.5 2 1.5.7 1.8-1 2.1 2.1-1 1.8.7 1.5 2 .5v3l-2 .5-.7 1.5 1 1.8-2.1 2.1-1.8-1-1.5.7-.5 2h-3l-.5-2-1.5-.7-1.8 1-2.1-2.1 1-1.8L1.5 9.5l-2-.5v-3l2-.5.7-1.5-1-1.8 2.1-2.1 1.8 1L6.5 1.5z" stroke="currentColor" strokeWidth="1.2" fill="none"/><circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>, label: "Administración" },
       { id: "biops", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 10l2-3 2 1.8 2-3.3" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "BI Ops", count: opsAlertCount },
       { id: "audit", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M8 1.8l5 1.8v3.6c0 3.1-2 5.8-5 7-3-1.2-5-3.9-5-7V3.6l5-1.8z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/><path d="M5.6 8l1.5 1.5 3.4-3.5" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Auditoria", count: auditEvents.length },
       { id: "metrics", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M2 14l4-5 3 2 5-7" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Métricas" },
@@ -920,7 +1157,7 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
     <div className={`sidebar-responsive ${mobileOpen ? "mobile-open" : ""}`} style={{
       width: w, minHeight: "100vh", background: theme.bgCard, borderRight: `1px solid ${theme.border}`,
       display: "flex", flexDirection: "column", transition: "width .3s cubic-bezier(.4,0,.2,1)",
-      position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 30, overflow: "hidden",
+      position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 30, overflow: "hidden", viewTransitionName: "portal-sidebar",
     }}>
       {/* Logo + collapse */}
       <div style={{ padding: collapsed ? "16px 12px" : "16px 20px", borderBottom: `1px solid ${theme.border}`, display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "space-between", minHeight: 64 }}>
@@ -937,12 +1174,13 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
           {navItems.map(item => {
             const active = activeView === item.id;
             return (
-              <button key={item.id} onClick={() => { setActiveView(item.id); if (onMobileClose) onMobileClose(); }} style={{
+              <button key={item.id} className={`sidebar-nav-item motion-control ${active ? "is-active" : ""}`} onClick={() => { setActiveView(item.id); if (onMobileClose) onMobileClose(); }} style={{
                 display: "flex", alignItems: "center", gap: 10, padding: collapsed ? "10px" : "10px 12px",
                 borderRadius: 10, border: "none", width: "100%", justifyContent: collapsed ? "center" : "flex-start",
                 background: active ? (dark ? T.teal + "18" : T.tealBg) : "transparent",
                 color: active ? T.teal : theme.textSecondary,
                 cursor: "pointer", transition: "all .2s", fontSize: 13, fontWeight: active ? 500 : 400,
+                viewTransitionName: active ? "sidebar-active-view" : undefined,
               }}>
                 {item.icon}
                 {!collapsed && <span>{item.label}</span>}
@@ -953,18 +1191,19 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
         </div>
 
         {/* Categories */}
-        {!collapsed && (
+        {!collapsed && activeView !== "admin" && (
           <div style={{ marginTop: 24 }}>
             <p style={{ fontSize: 10, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, padding: "0 8px" }}>Categorías</p>
             {categories.filter(c => c !== "Todos").map(cat => {
               const colors = categoryColors[cat] || categoryColors.Comercial;
               const active = activeCategory === cat;
               return (
-                <button key={cat} onClick={() => { setActiveCategory(active ? "Todos" : cat); setActiveView("dashboard"); if (onMobileClose) onMobileClose(); }} style={{
+                <button key={cat} className={`sidebar-nav-item motion-control ${active ? "is-active" : ""}`} onClick={() => { const nextCategory = active ? "Todos" : cat; if (activeView === "dashboard") runPortalTransition(() => setActiveCategory(nextCategory), "filter"); else { setActiveCategory(nextCategory); setActiveView("dashboard"); } if (onMobileClose) onMobileClose(); }} style={{
                   display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8,
                   border: "none", width: "100%", background: active ? (dark ? colors.darkBg : colors.bg) : "transparent",
                   color: active ? (dark ? colors.darkText : colors.accent) : theme.textMuted,
                   cursor: "pointer", fontSize: 12, transition: "all .2s", textAlign: "left",
+                  viewTransitionName: active ? "sidebar-active-category" : undefined,
                 }}>
                   <div style={{ width: 6, height: 6, borderRadius: 3, background: dark ? colors.darkText : colors.accent, opacity: active ? 1 : 0.4 }}/>
                   {cat}
@@ -1131,7 +1370,6 @@ function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], 
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDateKey, setSelectedDateKey] = useState(null);
   const maintenanceReports = reports.filter((report) => report.status === "maintenance");
-  const draftReports = reports.filter((report) => report.status === "draft");
   const openIssues = requests.filter((request) => request.type === "issue" && !["resolved", "rejected"].includes(request.status));
   const incidents = [
     maintenanceReports.length > 0 && {
@@ -1146,13 +1384,6 @@ function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], 
       title: "Incidencias reportadas",
       detail: `${openIssues.length} incidencia${openIssues.length === 1 ? "" : "s"} abiertas por usuarios.`,
       color: "#F59E0B",
-      dateKey: toDateKey(new Date()),
-    },
-    draftReports.length > 0 && {
-      id: "drafts",
-      title: "Reportes en preparacion",
-      detail: `${draftReports.length} reporte${draftReports.length === 1 ? "" : "s"} aun no estan publicados.`,
-      color: "#6366F1",
       dateKey: toDateKey(new Date()),
     },
   ].filter(Boolean);
@@ -1183,6 +1414,23 @@ function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], 
     dateKey: toDateKey(new Date()),
   }];
   const selectedDateLabel = new Date(`${activeDateKey}T12:00:00`).toLocaleDateString("es-PY", { day: "2-digit", month: "short" });
+
+  if (incidentEvents.length === 0) {
+    return (
+      <div style={{ background: dark ? "#10B9810A" : "#F0FDF8", border: `1px solid ${dark ? "#10B98130" : "#BBF7D0"}`, borderRadius: 16, padding: "16px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, alignSelf: "start" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+          <span style={{ width: 30, height: 30, borderRadius: 9, background: "#10B98118", color: "#10B981", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <svg width="15" height="15" viewBox="0 0 16 16"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5.2 8.2l1.8 1.8 3.8-4" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ fontSize: 12, color: theme.text, fontWeight: 700 }}>Operación normal</h3>
+            <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>No hay incidencias activas. El calendario aparecerá cuando exista un aviso.</p>
+          </div>
+        </div>
+        {isUserAdmin && <button onClick={onEditIncidents} style={{ border: `1px solid ${T.teal}44`, background: theme.bgCard, color: T.teal, borderRadius: 9, padding: "7px 10px", cursor: "pointer", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>Publicar aviso</button>}
+      </div>
+    );
+  }
 
   return (
     <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 18, height: "100%" }}>
@@ -1272,15 +1520,15 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
         {quickReports.map((report, index) => {
           const colors = categoryColors[report.category] || categoryColors.Comercial;
           return (
-            <button key={report.id} onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", animation: `scaleIn .25s ease-out ${.035 * index}s both` }}>
-              <span style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button key={report.id} className="quick-report-card motion-stagger-item" onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", "--stagger-index": Math.min(index, 7) }}>
+              <span className="quick-report-icon" style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <svg width="17" height="17" viewBox="0 0 22 22">{iconPaths[report.icon]}</svg>
               </span>
               <span style={{ minWidth: 0 }}>
                 <span style={{ display: "block", fontSize: 13, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</span>
                 <span style={{ display: "block", fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.category}</span>
               </span>
-              <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <svg className="quick-report-arrow" width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
           );
         })}
@@ -1444,8 +1692,7 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
 // HEALTH STATUS BADGE
 // ========================
 function HealthBadge({ report, dark }) {
-  const theme = dark ? darkTheme : lightTheme;
-  // Simulate freshness based on report status
+  if (!report || report.status === "live") return null;
   const statuses = { live: { label: "Conectado al Power Fabric", color: "#10B981", bg: dark ? "#10B98115" : "#D1FAE5" }, draft: { label: "Sin datos", color: "#F59E0B", bg: dark ? "#F59E0B15" : "#FEF3C7" }, maintenance: { label: "Sin conexión", color: "#EF4444", bg: dark ? "#EF444415" : "#FEE2E2" } };
   const s = statuses[report.status] || statuses.live;
   return (
@@ -1949,8 +2196,11 @@ function Dashboard({ user, onLogout }) {
   const [activeView, setActiveView] = useState("dashboard");
   const [recentViews, setRecentViews] = useState([]);
   const [cmdK, setCmdK] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
   const [showNotif, setShowNotif] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [previewUserEmail, setPreviewUserEmail] = useState("");
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
   const [incidents, setIncidents] = useState([]);
@@ -2032,27 +2282,35 @@ function Dashboard({ user, onLogout }) {
 
   const navigateToView = useCallback((view, options = {}) => {
     const { pushHistory = true } = options;
-    setActiveView(view);
-    setSelectedRequest(null);
-    if (pushHistory) {
-      pushUiState({ activeView: view, selectedReportId: null, detailReportId: null, showAdmin: false });
-    }
+    runPortalTransition(() => {
+      setActiveView(view);
+      setSelectedRequest(null);
+      if (pushHistory) {
+        pushUiState({ activeView: view, selectedReportId: null, detailReportId: null, showAdmin: false });
+      }
+    }, "page");
   }, [pushUiState]);
 
   const openAdminPanel = useCallback((options = {}) => {
     const { pushHistory = true } = options;
-    setShowAdmin(true);
-    if (pushHistory) {
-      pushUiState({ showAdmin: true, selectedReportId: null, detailReportId: null });
-    }
+    runPortalTransition(() => {
+      setShowAdmin(false);
+      setActiveView("admin");
+      if (pushHistory) {
+        pushUiState({ activeView: "admin", showAdmin: false, selectedReportId: null, detailReportId: null });
+      }
+    }, "page");
   }, [pushUiState]);
 
   const closeAdminPanel = useCallback((options = {}) => {
     const { pushHistory = true } = options;
-    setShowAdmin(false);
-    if (pushHistory) {
-      pushUiState({ showAdmin: false, selectedReportId: null, detailReportId: null });
-    }
+    runPortalTransition(() => {
+      setShowAdmin(false);
+      setActiveView("dashboard");
+      if (pushHistory) {
+        pushUiState({ activeView: "dashboard", showAdmin: false, selectedReportId: null, detailReportId: null });
+      }
+    }, "page");
   }, [pushUiState]);
 
   const openDetailPanel = useCallback((report, options = {}) => {
@@ -2074,11 +2332,13 @@ function Dashboard({ user, onLogout }) {
 
   const closeReportViewer = useCallback((options = {}) => {
     const { pushHistory = true } = options;
-    setSelectedReport(null);
-    setDetailReport(null);
-    if (pushHistory) {
-      pushUiState({ selectedReportId: null, detailReportId: null, showAdmin: false });
-    }
+    runPortalTransition(() => {
+      setSelectedReport(null);
+      setDetailReport(null);
+      if (pushHistory) {
+        pushUiState({ selectedReportId: null, detailReportId: null, showAdmin: false });
+      }
+    }, "report");
   }, [pushUiState]);
 
   useEffect(() => {
@@ -2179,8 +2439,21 @@ function Dashboard({ user, onLogout }) {
         }
       }
 
+      const subscribedUpdates = sharedReports.filter((nextReport) => {
+        if (!subscriptions.includes(nextReport.id) || !nextReport.version) return false;
+        const previousReport = reports.find((report) => report.id === nextReport.id);
+        return previousReport && previousReport.version && previousReport.version !== nextReport.version;
+      });
+      const nextNotifications = subscribedUpdates.length
+        ? [
+            ...subscribedUpdates.map((report) => ({ id: Date.now() + Math.random(), type: "update", message: `${report.name} publicó la versión ${report.version}`, time: new Date().toISOString(), reportId: report.id, read: false })),
+            ...notifications,
+          ].slice(0, 20)
+        : notifications;
+
       setReports(sharedReports);
-      saveAll(sharedReports, favorites, recentViews, notifications, requests);
+      if (subscribedUpdates.length) setNotifications(nextNotifications);
+      saveAll(sharedReports, favorites, recentViews, nextNotifications, requests);
 
       setReportSyncStatus("shared");
       setReportSyncMessage(sharedReports.length ? "Catálogo sincronizado" : "Catálogo sincronizado: sin reportes");
@@ -2188,7 +2461,7 @@ function Dashboard({ user, onLogout }) {
       setReportSyncStatus("local");
       setReportSyncMessage("Catálogo local: pendiente conectar bi-reports");
     }
-  }, [reports, favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
+  }, [reports, favorites, recentViews, notifications, requests, subscriptions, saveAll, shouldSyncShared]);
 
   // Cargar catálogo central al iniciar sesión y mantenerlo actualizado para todos los usuarios.
   useEffect(() => {
@@ -2224,20 +2497,11 @@ function Dashboard({ user, onLogout }) {
         reports: cleanReports,
         user: { name: user?.name, email: user?.email },
       });
-      let syncedReports = normalizeReports(data.reports || cleanReports);
-
-      // Refetch de confirmación: evita delays visuales si Netlify Blobs demora unos ms.
-      try {
-        const confirmData = await fetchReportsCatalog({ getAccessToken });
-        if (Array.isArray(confirmData.reports)) {
-          syncedReports = normalizeReports(confirmData.reports);
-        }
-      } catch (confirmError) {
-        console.warn("Confirmación de catálogo no disponible:", confirmError);
-      }
+      const syncedReports = normalizeReports(data.reports || cleanReports);
 
       setReports(syncedReports);
       saveAll(syncedReports, favorites, recentViews, notifications, requests);
+      sharedSyncRef.current.reports = Date.now();
       setReportSyncStatus("shared");
       setReportSyncMessage("Catálogo sincronizado");
       return { ok: true, synced: true, reports: syncedReports };
@@ -2260,9 +2524,17 @@ function Dashboard({ user, onLogout }) {
     const cleanReports = normalizeReports(newReports);
     const existing = reports.map(r => r.id);
     const added = cleanReports.filter(r => !existing.includes(r.id));
+    const versionUpdates = cleanReports.filter(next => {
+      const previous = reports.find(report => report.id === next.id);
+      return previous && next.version && next.version !== previous.version;
+    });
     let updatedNotifs = notifications;
-    if (added.length > 0) {
-      updatedNotifs = [...added.map(r => ({ id: Date.now() + Math.random(), type: "new", message: `Nuevo reporte agregado: ${r.name}`, time: new Date().toISOString(), reportId: r.id, read: false })), ...notifications].slice(0, 20);
+    if (added.length > 0 || versionUpdates.length > 0) {
+      updatedNotifs = [
+        ...added.map(r => ({ id: Date.now() + Math.random(), type: "new", message: `Nuevo reporte agregado: ${r.name}`, time: new Date().toISOString(), reportId: r.id, read: false })),
+        ...versionUpdates.map(r => ({ id: Date.now() + Math.random(), type: "update", message: `${r.name} actualizado a v${r.version}`, time: new Date().toISOString(), reportId: r.id, read: false })),
+        ...notifications,
+      ].slice(0, 20);
       setNotifications(updatedNotifs);
     }
     const result = await pushSharedReports(cleanReports);
@@ -2283,7 +2555,28 @@ function Dashboard({ user, onLogout }) {
     return { ...result, reports: finalReports };
   };
 
+  const loadReportsHistory = () => fetchReportsHistory({ getAccessToken });
+
+  const rollbackReports = async (snapshotId) => {
+    const result = await rollbackReportsCatalog({ getAccessToken, snapshotId });
+    const restored = normalizeReports(result.reports || []);
+    setReports(restored);
+    saveAll(restored, favorites, recentViews, notifications, requests);
+    setReportSyncStatus("shared");
+    setReportSyncMessage("Catálogo restaurado");
+    return { ...result, reports: restored };
+  };
+
   useEffect(() => { if (loaded) saveAll(reports, favorites, recentViews, notifications, requests); }, [favorites, requests, loaded]);
+
+  useEffect(() => {
+    if (!loaded || !user?.email) return;
+    let active = true;
+    fetchReportSubscriptions({ getAccessToken })
+      .then((result) => { if (active) setSubscriptions(Array.isArray(result.reportIds) ? result.reportIds : []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [loaded, user?.email]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -2305,17 +2598,20 @@ function Dashboard({ user, onLogout }) {
 
   // Track recent views
   const openReport = (report, options = {}) => {
-    if (!canUserViewReport(report, user)) {
+    const permissionUser = previewUserEmail && isAdmin(user.email) ? { email: previewUserEmail } : user;
+    if (!canUserViewReport(report, permissionUser)) {
       showToast("No tenés permiso para ver este reporte en DataReports", "error");
       return;
     }
     const { pushHistory = true } = options;
-    setReportZoom(100);
-    setSelectedReport(report);
-    setDetailReport(null);
-    if (pushHistory) {
-      pushUiState({ selectedReportId: report.id, detailReportId: null, showAdmin: false });
-    }
+    runPortalTransition(() => {
+      setReportZoom(100);
+      setSelectedReport(report);
+      setDetailReport(null);
+      if (pushHistory) {
+        pushUiState({ selectedReportId: report.id, detailReportId: null, showAdmin: false });
+      }
+    }, "report");
     const nextAuditEvents = recordAuditEvent("report_opened", {
       id: report.id,
       name: report.name,
@@ -2628,14 +2924,21 @@ function Dashboard({ user, onLogout }) {
     return `Hace ${days}d`;
   };
 
-  // Keyboard shortcut Ctrl+K
+  // Global navigation shortcuts
   useEffect(() => {
-    const handler = (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); setCmdK(true); } if (e.key === "Escape") setCmdK(false); };
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setCmdK(true); }
+      if (e.altKey && e.key === "1") { e.preventDefault(); navigateToView("dashboard"); }
+      if (e.altKey && e.key === "2") { e.preventDefault(); navigateToView("favorites"); }
+      if (e.altKey && e.key.toLowerCase() === "a" && isAdmin(user.email)) { e.preventDefault(); openAdminPanel(); }
+      if (e.key === "Escape") { setCmdK(false); setCommandQuery(""); }
+    };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [navigateToView, openAdminPanel, user.email]);
 
-  const userVisibleReports = reports.filter(r => canUserViewReport(r, user));
+  const effectiveCatalogUser = previewUserEmail && isAdmin(user.email) ? { ...user, email: previewUserEmail } : user;
+  const userVisibleReports = reports.filter(r => canUserViewReport(r, effectiveCatalogUser));
   const categories = ["Todos", ...new Set(userVisibleReports.map(r => r.category))];
   let filtered = userVisibleReports.filter(r => {
     const matchCat = activeCategory === "Todos" || r.category === activeCategory;
@@ -2664,6 +2967,16 @@ function Dashboard({ user, onLogout }) {
     query: searchQuery,
   });
   const requestStats = getRequestStats(visibleRequests);
+  const commandNeedle = commandQuery.trim().toLowerCase();
+  const commandItems = [
+    { key: "view-dashboard", type: "view", label: "Dashboard", detail: "Ir al catálogo", action: () => navigateToView("dashboard") },
+    { key: "view-favorites", type: "view", label: "Favoritos", detail: "Abrir reportes favoritos", action: () => navigateToView("favorites") },
+    { key: "view-requests", type: "view", label: "Solicitudes BI", detail: "Consultar solicitudes", action: () => navigateToView("requests") },
+    ...(isAdmin(user.email) ? [{ key: "view-admin", type: "view", label: "Administración", detail: "Gestionar catálogo y permisos", action: () => openAdminPanel() }] : []),
+    ...categories.filter((category) => category !== "Todos").map((category) => ({ key: `category-${category}`, type: "category", label: category, detail: "Filtrar por categoría", action: () => { setActiveCategory(category); navigateToView("dashboard"); } })),
+    ...userVisibleReports.map((report) => ({ key: `report-${report.id}`, type: "report", label: report.name, detail: `${report.category}${report.version ? ` · v${report.version}` : ""}`, action: () => openReport(report) })),
+    ...visibleRequests.slice(0, 20).map((request) => ({ key: `request-${request.id}`, type: "request", label: request.reportName || "Solicitud BI", detail: request.summary || request.type || "Solicitud", action: () => { setSelectedRequest(request); navigateToView("requests"); } })),
+  ].filter((item) => !commandNeedle || `${item.label} ${item.detail}`.toLowerCase().includes(commandNeedle)).slice(0, 14);
 
   const updateRequestWorkflow = async (requestId, updates, toastMessage) => {
     const previousRequest = requests.find(req => req.id === requestId);
@@ -2962,6 +3275,82 @@ function Dashboard({ user, onLogout }) {
     </div>
   );
 
+  const renderReportActionBar = (report, isFavorite) => {
+    const actions = [
+      {
+        label: "Favorito",
+        title: isFavorite ? "Quitar de favoritos" : "Agregar a favoritos",
+        onClick: (event) => toggleFav(report.id, event),
+        color: isFavorite ? "#F59E0B" : theme.textSecondary,
+        active: isFavorite,
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFavorite ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.2"/></svg>,
+      },
+      {
+        label: "Seguir",
+        title: subscriptions.includes(report.id) ? "Cancelar suscripción" : "Recibir avisos de cambios",
+        onClick: () => toggleSubscription(report.id),
+        color: subscriptions.includes(report.id) ? T.teal : theme.textSecondary,
+        active: subscriptions.includes(report.id),
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 1.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 8.5v-3a4 4 0 0 0-4-4z" stroke="currentColor" strokeWidth="1.3" fill={subscriptions.includes(report.id) ? "currentColor" : "none"} fillOpacity=".16"/><path d="M6 13a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>,
+      },
+      {
+        label: "Problema",
+        title: "Reportar un problema",
+        onClick: () => openActionModal("issue", report),
+        color: "#EF4444",
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+      },
+      {
+        label: "Cambio",
+        title: "Solicitar un cambio",
+        onClick: () => openActionModal("change", report),
+        color: "#6366F1",
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/></svg>,
+      },
+      {
+        label: "Copiar",
+        title: "Copiar enlace del reporte",
+        onClick: () => copyReportLink(report),
+        color: T.teal,
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M6.5 9.5l3-3M7 4.5l.8-.8a3 3 0 0 1 4.2 4.2l-.8.8M9 11.5l-.8.8A3 3 0 0 1 4 8.1l.8-.8" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      },
+    ];
+
+    return (
+      <div aria-label="Acciones del reporte" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 6, marginTop: 14 }}>
+        {actions.map((action) => (
+          <button key={action.label} type="button" title={action.title} onClick={action.onClick} style={{
+            minWidth: 0, height: 34, padding: "0 8px", borderRadius: 8,
+            border: `1px solid ${action.active ? action.color + "55" : theme.border}`,
+            background: action.active ? action.color + (dark ? "14" : "0F") : theme.bgCard,
+            color: action.color, cursor: "pointer", transition: "border-color .18s ease, background .18s ease, transform .18s ease",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+            fontSize: 10, fontWeight: 500, fontFamily: "'Outfit', system-ui",
+          }}>
+            <span style={{ display: "flex", flexShrink: 0 }}>{action.icon}</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{action.label}</span>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const toggleSubscription = async (reportId) => {
+    const previous = subscriptions;
+    const next = previous.includes(reportId)
+      ? previous.filter((id) => id !== reportId)
+      : [...previous, reportId];
+    setSubscriptions(next);
+    try {
+      const result = await saveReportSubscriptions({ getAccessToken, reportIds: next });
+      setSubscriptions(Array.isArray(result.reportIds) ? result.reportIds : next);
+      showToast(next.includes(reportId) ? "Suscripción activada" : "Suscripción desactivada");
+    } catch (error) {
+      setSubscriptions(previous);
+      showToast("No se pudo actualizar la suscripción", "error");
+    }
+  };
+
   const renderViewerDetailPanel = () => detailReport && (
     <div style={{ position: "fixed", inset: 0, zIndex: 120, display: "flex", justifyContent: "flex-end" }} onClick={() => closeDetailPanel()}>
       <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.38)", backdropFilter: "blur(3px)" }}/>
@@ -2981,9 +3370,11 @@ function Dashboard({ user, onLogout }) {
               <h2 style={{ fontSize: 20, fontWeight: 600, color: theme.text, marginBottom: 8 }}>{detailReport.name}</h2>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, fontWeight: 500, color: dark ? colors.darkText : colors.accent, background: dark ? colors.darkBg : colors.bg, padding: "4px 12px", borderRadius: 10 }}>{detailReport.category}</span>
+                <VersionBadge version={detailReport.version} dark={dark}/>
                 <StatusBadge status={detailReport.status} dark={dark}/>
                 <HealthBadge report={detailReport} dark={dark}/>
               </div>
+              {renderReportActionBar(detailReport, isFav)}
             </div>
             <div style={{ flex: 1, overflow: "auto", padding: "20px 28px 28px" }}>
               <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Descripción</p>
@@ -2992,6 +3383,7 @@ function Dashboard({ user, onLogout }) {
                 <p style={{ fontSize: 11, fontWeight: 500, color: T.teal, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>¿Para qué sirve?</p>
                 <p style={{ fontSize: 13, color: theme.text, lineHeight: 1.65 }}>{getReportPurpose(detailReport)}</p>
               </div>
+              <ReportVersionPanel report={detailReport} dark={dark}/>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
                 {[{ label: "Responsable", value: detailReport.owner || "Equipo BI" }, { label: "Acceso", value: detailReport.accessLevel || detailReport.audience || "Corporativo" }, { label: "Fuente", value: detailReport.dataSource || "Power BI Service" }, { label: "Actualización", value: detailReport.refreshFrequency || "Según dataset" }].map((item, i) => (
                   <div key={i} style={{ background: theme.bgSurface, borderRadius: 12, padding: "12px 14px", border: `1px solid ${theme.border}` }}>
@@ -3011,12 +3403,6 @@ function Dashboard({ user, onLogout }) {
                   ))}
                 </div>
               )}
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <button onClick={(e) => toggleFav(detailReport.id, e)} style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: isFav ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard, color: theme.text, cursor: "pointer", textAlign: "left" }}>{isFav ? "Quitar de favoritos" : "Agregar a favoritos"}</button>
-                <button onClick={() => openActionModal("issue", detailReport)} style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.text, cursor: "pointer", textAlign: "left" }}>Reportar problema</button>
-                <button onClick={() => openActionModal("change", detailReport)} style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.text, cursor: "pointer", textAlign: "left" }}>Solicitar cambio</button>
-                <button onClick={() => copyReportLink(detailReport)} style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.text, cursor: "pointer", textAlign: "left" }}>Copiar link del reporte</button>
-              </div>
             </div>
             <div style={{ padding: "16px 28px", borderTop: `1px solid ${theme.border}`, display: "flex", gap: 10 }}>
               {!isMaintenance && <button onClick={() => { closeDetailPanel({ pushHistory: false }); openReport(detailReport); }} style={{ flex: 1, padding: "14px", borderRadius: 14, border: "none", background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Abrir reporte</button>}
@@ -3052,7 +3438,7 @@ function Dashboard({ user, onLogout }) {
     const printReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.print(); } catch(err) {} } };
 
     return (
-      <div style={{ fontFamily: "'Outfit', system-ui", height: "100vh", minHeight: 0, overflow: "hidden", background: theme.bg, display: "flex", flexDirection: "column" }}>
+      <div className="portal-shell motion-page" style={{ fontFamily: "'Outfit', system-ui", height: "100vh", minHeight: 0, overflow: "hidden", background: theme.bg, display: "flex", flexDirection: "column", viewTransitionName: getReportTransitionName(selectedReport.id) }}>
         <style>{globalStyles}</style>
         {renderViewerDetailPanel()}
         {renderActionModal()}
@@ -3061,7 +3447,7 @@ function Dashboard({ user, onLogout }) {
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", background: theme.bgCard, borderBottom: `1px solid ${theme.border}`, flexShrink: 0, flexWrap: "wrap", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={() => closeReportViewer()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", border: `1px solid ${theme.border}`, borderRadius: 10, background: theme.bgSurface, cursor: "pointer", fontSize: 12, color: theme.textSecondary, transition: "all .2s" }}>
+            <button className="motion-control" onClick={() => closeReportViewer()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", border: `1px solid ${theme.border}`, borderRadius: 10, background: theme.bgSurface, cursor: "pointer", fontSize: 12, color: theme.textSecondary, transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
               Volver
             </button>
@@ -3081,12 +3467,13 @@ function Dashboard({ user, onLogout }) {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <button onClick={(e) => toggleFav(selectedReport.id, e)} title={isFav ? "Quitar de favoritos" : "Agregar a favoritos"} style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: isFav ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
+            <button className="motion-control" onClick={(e) => toggleFav(selectedReport.id, e)} aria-label={isFav ? "Quitar de favoritos" : "Agregar a favoritos"} data-tooltip={isFav ? "Quitar de favoritos" : "Agregar a favoritos"} style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: isFav ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFav ? "#FBBF24" : "none"} stroke={isFav ? "#FBBF24" : theme.textMuted} strokeWidth="1.2"/></svg>
             </button>
-            <button onClick={() => openDetailPanel(selectedReport)} title="Ver detalles" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
+            <button className="motion-control" onClick={() => openDetailPanel(selectedReport)} aria-label="Ver detalles" data-tooltip="Ver detalles" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 7v4m0-6.5V5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
+            <VersionBadge version={selectedReport.version} dark={dark}/>
             <StatusBadge status={selectedReport.status} dark={dark}/>
           </div>
         </div>
@@ -3100,17 +3487,17 @@ function Dashboard({ user, onLogout }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ fontSize: 10, color: theme.textMuted, marginRight: 4 }}>Zoom:</span>
-            <button onClick={() => zoomReport(reportZoom - 10)} disabled={reportZoom <= 60} title="Alejar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom <= 60 ? "not-allowed" : "pointer", color: reportZoom <= 60 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>-</button>
+            <button className="motion-control" onClick={() => zoomReport(reportZoom - 10)} disabled={reportZoom <= 60} aria-label="Alejar" data-tooltip="Alejar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom <= 60 ? "not-allowed" : "pointer", color: reportZoom <= 60 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>-</button>
             <span style={{ minWidth: 42, textAlign: "center", fontSize: 10, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{reportZoom}%</span>
-            <button onClick={() => zoomReport(reportZoom + 10)} disabled={reportZoom >= 180} title="Acercar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom >= 180 ? "not-allowed" : "pointer", color: reportZoom >= 180 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>+</button>
+            <button className="motion-control" onClick={() => zoomReport(reportZoom + 10)} disabled={reportZoom >= 180} aria-label="Acercar" data-tooltip="Acercar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom >= 180 ? "not-allowed" : "pointer", color: reportZoom >= 180 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>+</button>
             <div style={{ width: 1, height: 20, background: theme.border, margin: "0 6px" }}/>
-            <button onClick={reloadReport} title="Recargar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
+            <button className="motion-control" onClick={reloadReport} aria-label="Recargar reporte" data-tooltip="Recargar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
               <svg width="13" height="13" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4M2 4V8h4M14 12V8h-4" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button onClick={printReport} title="Imprimir / Guardar PDF" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
+            <button className="motion-control" onClick={printReport} aria-label="Imprimir o guardar PDF" data-tooltip="Imprimir / Guardar PDF" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
               <svg width="13" height="13" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M4 4V2h8v2m-8 4H2v5h2m8 0h2V8h-2M4 11h8v3H4v-3z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button onClick={fullscreenToggle} title="Pantalla completa" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
+            <button className="motion-control" onClick={fullscreenToggle} aria-label="Pantalla completa" data-tooltip="Pantalla completa" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
               <svg width="13" height="13" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 5V3a1 1 0 0 1 1-1h2m6 0h2a1 1 0 0 1 1 1v2m0 6v2a1 1 0 0 1-1 1h-2m-6 0H3a1 1 0 0 1-1-1v-2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
             </button>
           </div>
@@ -3156,9 +3543,8 @@ function Dashboard({ user, onLogout }) {
 
   // MAIN VIEW WITH SIDEBAR
   return (
-    <div style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
+    <div className="portal-shell" style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
       <style>{globalStyles}</style>
-      {showAdmin && <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user}/>}
       {showIncidentEditor && <IncidentEditor dark={dark} incidents={incidents} onSave={saveSharedIncidents} onClose={() => setShowIncidentEditor(false)}/>}
       {showNotif && <div onClick={() => setShowNotif(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }}/>}
       {renderActionModal()}
@@ -3166,33 +3552,31 @@ function Dashboard({ user, onLogout }) {
 
       {/* Command Palette (Ctrl+K) */}
       {cmdK && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 120 }} onClick={() => setCmdK(false)}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 120 }} onClick={() => { setCmdK(false); setCommandQuery(""); }}>
           <div onClick={e => e.stopPropagation()} style={{ width: 520, background: theme.bgCard, borderRadius: 20, border: `1px solid ${theme.border}`, boxShadow: `0 24px 64px ${dark ? "rgba(0,0,0,.5)" : "rgba(0,0,0,.15)"}`, overflow: "hidden", animation: "scaleIn .2s ease-out" }}>
             <div style={{ padding: "16px 20px", borderBottom: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 10 }}>
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-              <input autoFocus type="text" placeholder="Buscar reportes, categorías..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              <input autoFocus type="text" placeholder="Buscar reportes, categorías, solicitudes o secciones..." value={commandQuery} onChange={e => setCommandQuery(e.target.value)}
                 style={{ border: "none", background: "transparent", outline: "none", fontSize: 15, color: theme.text, width: "100%", fontFamily: "'Outfit', system-ui" }}/>
               <span style={{ fontSize: 10, color: theme.textMuted, background: theme.bgSurface, padding: "3px 8px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>ESC</span>
             </div>
             <div style={{ maxHeight: 360, overflow: "auto", padding: 8 }}>
-              {userVisibleReports.filter(r => r.name.toLowerCase().includes(searchQuery.toLowerCase()) || r.category.toLowerCase().includes(searchQuery.toLowerCase())).map(report => {
-                const colors = categoryColors[report.category] || categoryColors.Comercial;
-                return (
-                  <button key={report.id} onClick={() => { openReport(report); setCmdK(false); setSearchQuery(""); }}
+              {commandItems.length === 0 ? <div style={{ padding: 28, textAlign: "center", color: theme.textMuted, fontSize: 12 }}>No encontramos resultados.</div> : commandItems.map(item => (
+                  <button key={item.key} onClick={() => { item.action(); setCmdK(false); setCommandQuery(""); }}
                     style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, border: "none", width: "100%", background: "transparent", cursor: "pointer", transition: "background .15s", textAlign: "left" }}
                     onMouseEnter={e => e.currentTarget.style.background = theme.bgSurface} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <div style={{ width: 32, height: 32, borderRadius: 8, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <svg width="14" height="14" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
+                    <div style={{ width: 32, height: 32, borderRadius: 8, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, textTransform: "uppercase" }}>
+                      {item.type === "report" ? "BI" : item.type === "request" ? "SOL" : item.type === "category" ? "CAT" : "IR"}
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{report.name}</div>
-                      <div style={{ fontSize: 11, color: theme.textMuted }}>{report.category}</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{item.label}</div>
+                      <div style={{ fontSize: 11, color: theme.textMuted }}>{item.detail}</div>
                     </div>
-                    <StatusBadge status={report.status} dark={dark}/>
+                    <span style={{ fontSize: 9, color: theme.textMuted, textTransform: "uppercase" }}>{item.type}</span>
                   </button>
-                );
-              })}
+              ))}
             </div>
+            <div style={{ padding: "9px 14px", borderTop: `1px solid ${theme.border}`, display: "flex", gap: 14, color: theme.textMuted, fontSize: 9 }}><span>Alt+1 Dashboard</span><span>Alt+2 Favoritos</span>{isAdmin(user.email) && <span>Alt+A Administración</span>}</div>
           </div>
         </div>
       )}
@@ -3208,29 +3592,29 @@ function Dashboard({ user, onLogout }) {
       {/* Main content area */}
       <div className="main-content-responsive" style={{ marginLeft: sidebarWidth, transition: "margin-left .3s cubic-bezier(.4,0,.2,1)", minHeight: "100vh" }}>
         {/* Top bar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: theme.bgCard, borderBottom: `1px solid ${theme.border}`, position: "sticky", top: 0, zIndex: 20, gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: theme.bgCard, borderBottom: `1px solid ${theme.border}`, position: "sticky", top: 0, zIndex: 20, gap: 8, viewTransitionName: "portal-topbar" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {/* Mobile menu button */}
-            <button className="mobile-menu-btn" onClick={() => setMobileSidebarOpen(true)} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "none", alignItems: "center", justifyContent: "center" }}>
+            <button className="mobile-menu-btn motion-control" onClick={() => setMobileSidebarOpen(true)} aria-label="Abrir navegación" data-tooltip="Abrir navegación" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "none", alignItems: "center", justifyContent: "center" }}>
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
             <h2 style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>
-              {activeView === "dashboard" ? "Dashboard" : activeView === "favorites" ? "Favoritos" : activeView === "recent" ? "Recientes" : activeView === "requests" ? "Solicitudes BI" : activeView === "biops" ? "BI Ops" : activeView === "audit" ? "Auditoria" : "Métricas"}
+              {activeView === "dashboard" ? "Dashboard" : activeView === "favorites" ? "Favoritos" : activeView === "recent" ? "Recientes" : activeView === "requests" ? "Solicitudes BI" : activeView === "admin" ? "Administración" : activeView === "biops" ? "BI Ops" : activeView === "audit" ? "Auditoria" : "Métricas"}
             </h2>
             {activeCategory !== "Todos" && activeView === "dashboard" && (
               <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "15" : T.tealBg, padding: "3px 10px", borderRadius: 8, fontWeight: 500 }}>{activeCategory}</span>
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button className="topbar-search" onClick={() => setCmdK(true)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 12, background: theme.bgSurface, border: `1px solid ${theme.border}`, cursor: "pointer", transition: "all .2s" }}>
+            <button className="topbar-search motion-control" onClick={() => setCmdK(true)} aria-label="Abrir búsqueda global" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 12, background: theme.bgSurface, border: `1px solid ${theme.border}`, cursor: "pointer", transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               <span style={{ fontSize: 12, color: theme.textMuted }}>Buscar...</span>
-              <span style={{ fontSize: 10, color: theme.textMuted, background: theme.bgCard, padding: "2px 6px", borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${theme.border}` }}>⌘K</span>
+              <span style={{ fontSize: 10, color: theme.textMuted, background: theme.bgCard, padding: "2px 6px", borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${theme.border}` }}>Ctrl K</span>
             </button>
 
             {/* Notification bell */}
             <div style={{ position: "relative" }}>
-              <button onClick={() => setShowNotif(!showNotif)} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", transition: "all .2s" }}>
+              <button className="motion-control" onClick={() => setShowNotif(!showNotif)} aria-label="Abrir notificaciones" data-tooltip="Notificaciones" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", transition: "all .2s" }}>
                 <svg width="15" height="15" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M8 1.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 8.5v-3a4 4 0 0 0-4-4z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M6 13a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>
                 {unreadCount > 0 && <div style={{ position: "absolute", top: 5, right: 5, width: 8, height: 8, borderRadius: 4, background: "#EF4444", border: `2px solid ${theme.bgCard}` }}/>}
               </button>
@@ -3265,7 +3649,7 @@ function Dashboard({ user, onLogout }) {
               )}
             </div>
 
-            <button onClick={() => setDark(!dark)} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
+            <button className="motion-control" onClick={() => setDark(!dark)} aria-label={dark ? "Activar tema claro" : "Activar tema oscuro"} data-tooltip={dark ? "Tema claro" : "Tema oscuro"} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
               {dark ? <svg width="15" height="15" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.5" stroke="#FBBF24" strokeWidth="1.5" fill="none"/></svg> : <svg width="15" height="15" viewBox="0 0 16 16"><path d="M14 9.3A6 6 0 0 1 6.7 2 6 6 0 1 0 14 9.3z" stroke="#6B7280" strokeWidth="1.5" fill="none"/></svg>}
             </button>
             {isAdmin(user.email) && (
@@ -3277,7 +3661,17 @@ function Dashboard({ user, onLogout }) {
           </div>
         </div>
 
-        <div style={{ padding: "24px 28px" }}>
+        <div key={activeView} className="motion-page" style={{ padding: "24px 28px" }}>
+          {previewUserEmail && isAdmin(user.email) && activeView !== "admin" && (
+            <div style={{ marginBottom: 14, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "10" : T.tealBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div><strong style={{ color: theme.text, fontSize: 12 }}>Vista de permisos</strong><span style={{ color: theme.textMuted, fontSize: 11 }}> · Estás viendo el catálogo disponible para {previewUserEmail}</span></div>
+              <button onClick={() => setPreviewUserEmail("")} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgCard, color: T.teal, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Salir de la vista</button>
+            </div>
+          )}
+
+          {activeView === "admin" && isAdmin(user.email) && (
+            <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={(email) => { setPreviewUserEmail(email); navigateToView("dashboard"); }} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
+          )}
           {/* Welcome and incident calendar - only on dashboard view */}
           {activeView === "dashboard" && (
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "stretch" }} className="metrics-grid">
@@ -3443,9 +3837,11 @@ function Dashboard({ user, onLogout }) {
                       <h2 style={{ fontSize: 20, fontWeight: 500, color: theme.text, marginBottom: 6 }}>{detailReport.name}</h2>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 11, fontWeight: 500, color: dark ? colors.darkText : colors.accent, background: dark ? colors.darkBg : colors.bg, padding: "4px 12px", borderRadius: 10 }}>{detailReport.category}</span>
+                        <VersionBadge version={detailReport.version} dark={dark}/>
                         <StatusBadge status={detailReport.status} dark={dark}/>
                         <HealthBadge report={detailReport} dark={dark}/>
                       </div>
+                      {renderReportActionBar(detailReport, isFav)}
                     </div>
 
                     {/* Scrollable content */}
@@ -3473,6 +3869,8 @@ function Dashboard({ user, onLogout }) {
                         <p style={{ fontSize: 13, color: theme.text, lineHeight: 1.65 }}>{getReportPurpose(detailReport)}</p>
                       </div>
 
+                      <ReportVersionPanel report={detailReport} dark={dark}/>
+
                       {/* Info cards grid */}
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
                         {[
@@ -3491,63 +3889,26 @@ function Dashboard({ user, onLogout }) {
                         ))}
                       </div>
 
-                      {/* Technical info */}
-                      <div style={{ background: theme.bgSurface, borderRadius: 14, padding: 18, marginBottom: 20, border: `1px solid ${theme.border}` }}>
-                        <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Información técnica</p>
-                        {[
-                          { l: "Report ID", v: detailReport.id },
-                          { l: "Workspace ID", v: detailReport.groupId || "No configurado" },
-                          { l: "Categoría", v: detailReport.category },
-                          { l: "Estado actual", v: detailReport.status === "live" ? "Activo" : detailReport.status === "draft" ? "Borrador" : "En mantenimiento" },
-                          { l: "Criticidad", v: detailReport.criticality ? String(detailReport.criticality).charAt(0).toUpperCase() + String(detailReport.criticality).slice(1) : "Media" },
-                          { l: "Actualización", v: detailReport.refreshFrequency || "Según dataset" },
-                          { l: "Última edición", v: detailReport.updatedAt ? new Date(detailReport.updatedAt).toLocaleString("es-PY") : "Sin registro" },
-                        ].map((item, i, arr) => (
-                          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "8px 0", borderBottom: i < arr.length - 1 ? `1px solid ${theme.border}` : "none" }}>
-                            <span style={{ fontSize: 12, color: theme.textMuted }}>{item.l}</span>
-                            <span style={{ fontSize: 11, color: T.teal, fontFamily: "'JetBrains Mono', monospace", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{item.v}</span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Secondary actions */}
-                      <div style={{ marginBottom: 20 }}>
-                        <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Acciones</p>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <button onClick={(e) => { toggleFav(detailReport.id, e); }} style={{
-                            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12,
-                            border: `1px solid ${theme.border}`, background: isFav ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard,
-                            cursor: "pointer", transition: "all .2s", width: "100%", textAlign: "left",
-                          }}>
-                            <svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFav ? "#FBBF24" : "none"} stroke={isFav ? "#FBBF24" : theme.textMuted} strokeWidth="1.2"/></svg>
-                            <span style={{ fontSize: 13, color: theme.text }}>{isFav ? "Quitar de favoritos" : "Agregar a favoritos"}</span>
-                          </button>
-                          <button onClick={() => openActionModal("issue", detailReport)} style={{
-                            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12,
-                            border: `1px solid ${theme.border}`, background: theme.bgCard,
-                            cursor: "pointer", transition: "all .2s", width: "100%", textAlign: "left",
-                          }}>
-                            <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: "#EF4444" }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                            <span style={{ fontSize: 13, color: theme.text }}>Reportar problema</span>
-                          </button>
-                          <button onClick={() => openActionModal("change", detailReport)} style={{
-                            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12,
-                            border: `1px solid ${theme.border}`, background: theme.bgCard,
-                            cursor: "pointer", transition: "all .2s", width: "100%", textAlign: "left",
-                          }}>
-                            <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: "#6366F1" }}><path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/></svg>
-                            <span style={{ fontSize: 13, color: theme.text }}>Solicitar cambio</span>
-                          </button>
-                          <button onClick={() => copyReportLink(detailReport)} style={{
-                            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12,
-                            border: `1px solid ${theme.border}`, background: theme.bgCard,
-                            cursor: "pointer", transition: "all .2s", width: "100%", textAlign: "left",
-                          }}>
-                            <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: T.teal }}><path d="M6.5 9.5l3-3M7 4.5l.8-.8a3 3 0 0 1 4.2 4.2l-.8.8M9 11.5l-.8.8A3 3 0 0 1 4 8.1l.8-.8" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                            <span style={{ fontSize: 13, color: theme.text }}>Copiar link del reporte</span>
-                          </button>
+                      {/* Technical info is restricted to portal administrators. */}
+                      {isAdmin(user.email) && (
+                        <div style={{ background: theme.bgSurface, borderRadius: 14, padding: 18, marginBottom: 20, border: `1px solid ${theme.border}` }}>
+                          <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Información técnica</p>
+                          {[
+                            { l: "Report ID", v: detailReport.id },
+                            { l: "Workspace ID", v: detailReport.groupId || "No configurado" },
+                            { l: "Categoría", v: detailReport.category },
+                            { l: "Estado actual", v: detailReport.status === "live" ? "Activo" : detailReport.status === "draft" ? "Borrador" : "En mantenimiento" },
+                            { l: "Criticidad", v: detailReport.criticality ? String(detailReport.criticality).charAt(0).toUpperCase() + String(detailReport.criticality).slice(1) : "Media" },
+                            { l: "Actualización", v: detailReport.refreshFrequency || "Según dataset" },
+                            { l: "Última edición", v: detailReport.updatedAt ? new Date(detailReport.updatedAt).toLocaleString("es-PY") : "Sin registro" },
+                          ].map((item, i, arr) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "8px 0", borderBottom: i < arr.length - 1 ? `1px solid ${theme.border}` : "none" }}>
+                              <span style={{ fontSize: 12, color: theme.textMuted }}>{item.l}</span>
+                              <span style={{ fontSize: 11, color: T.teal, fontFamily: "'JetBrains Mono', monospace", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{item.v}</span>
+                            </div>
+                          ))}
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* Footer with main action */}
@@ -3583,52 +3944,44 @@ function Dashboard({ user, onLogout }) {
           {(activeView === "dashboard" || activeView === "favorites") && (
           <>
             {/* Catalog toolbar */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18, alignItems: "center", animation: "fadeUp .3s ease-out" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18, alignItems: "center", padding: 10, borderRadius: 14, background: theme.bgCard, border: `1px solid ${theme.border}`, animation: "fadeUp .3s ease-out" }}>
               {/* Inline search */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 12, background: theme.bgCard, border: `1px solid ${theme.border}`, flex: "1 1 200px", maxWidth: 320 }}>
+              <div className="portal-search-shell" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: theme.bgSurface, border: `1px solid ${theme.border}`, flex: "1 1 240px", minWidth: 220 }}>
                 <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted, flexShrink: 0 }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                 <input type="text" placeholder="Buscar por nombre, descripción o categoría..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                   style={{ border: "none", background: "transparent", outline: "none", fontSize: 12, color: theme.text, width: "100%", fontFamily: "'Outfit', system-ui" }}/>
                 {searchQuery && <button onClick={() => setSearchQuery("")} style={{ border: "none", background: "none", cursor: "pointer", color: theme.textMuted, fontSize: 14, lineHeight: 1 }}>×</button>}
               </div>
 
-              {/* Category filter pills */}
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {categories.map(cat => {
-                  const isActive = activeCategory === cat;
-                  const colors = categoryColors[cat];
-                  return (
-                    <button key={cat} onClick={() => setActiveCategory(cat)} style={{
-                      padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${isActive ? (colors?.accent || T.teal) : "transparent"}`,
-                      background: isActive ? (dark ? (colors?.darkBg || T.teal + "15") : (colors?.bg || T.tealBg)) : theme.bgCard,
-                      color: isActive ? (dark ? (colors?.darkText || T.tealLight) : (colors?.accent || T.teal)) : theme.textMuted,
-                      fontSize: 11, fontWeight: 500, cursor: "pointer", transition: "all .2s", whiteSpace: "nowrap",
-                    }}>{cat}</button>
-                  );
-                })}
-              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
+                Categoría
+                <select className="motion-control" value={activeCategory} onChange={e => { const value = e.target.value; runPortalTransition(() => setActiveCategory(value), "filter"); }} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                  {categories.map(cat => <option key={cat} value={cat}>{cat === "Todos" ? "Todas" : cat}</option>)}
+                </select>
+              </label>
 
-              {/* Status filter */}
-              <div style={{ display: "flex", gap: 4 }}>
-                {[{ key: "all", label: "Todos" }, { key: "live", label: "Activo" }, { key: "draft", label: "Borrador" }, { key: "maintenance", label: "Mantenimiento" }].map(s => (
-                  <button key={s.key} onClick={() => setStatusFilter(s.key)} style={{
-                    padding: "6px 12px", borderRadius: 20, border: "none", fontSize: 11, fontWeight: 500, cursor: "pointer", transition: "all .2s",
-                    background: statusFilter === s.key ? (dark ? T.teal + "18" : T.tealBg) : theme.bgCard,
-                    color: statusFilter === s.key ? T.teal : theme.textMuted,
-                  }}>{s.label}</button>
-                ))}
-              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
+                Estado
+                <select className="motion-control" value={statusFilter} onChange={e => { const value = e.target.value; runPortalTransition(() => setStatusFilter(value), "filter"); }} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                  <option value="all">Todos</option>
+                  <option value="live">Activos</option>
+                  {isAdmin(user.email) && <option value="draft">Borradores</option>}
+                  <option value="maintenance">Mantenimiento</option>
+                </select>
+              </label>
 
-              {/* Sort */}
-              <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{
-                padding: "7px 12px", borderRadius: 10, border: `1px solid ${theme.border}`,
-                background: theme.bgCard, color: theme.textSecondary, fontSize: 11, cursor: "pointer",
-                fontFamily: "'Outfit', system-ui", outline: "none", marginLeft: "auto",
-              }}>
-                <option value="name">Nombre A-Z</option>
-                <option value="category">Categoría</option>
-                <option value="status">Estado</option>
-              </select>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
+                Orden
+                <select className="motion-control" value={sortBy} onChange={e => { const value = e.target.value; runPortalTransition(() => setSortBy(value), "filter"); }} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                  <option value="name">Nombre A-Z</option>
+                  <option value="category">Categoría</option>
+                  <option value="status">Estado</option>
+                </select>
+              </label>
+
+              {(searchQuery || activeCategory !== "Todos" || statusFilter !== "all" || sortBy !== "name") && (
+                <button className="motion-control" onClick={() => runPortalTransition(() => { setSearchQuery(""); setActiveCategory("Todos"); setStatusFilter("all"); setSortBy("name"); }, "filter")} style={{ height: 34, padding: "0 11px", borderRadius: 9, border: `1px solid ${theme.border}`, background: "transparent", color: T.teal, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Limpiar</button>
+              )}
             </div>
 
             {/* Results count */}
@@ -3644,26 +3997,27 @@ function Dashboard({ user, onLogout }) {
               const isFav = favorites.includes(report.id);
               const isMaintenance = report.status === "maintenance";
               return (
-                <div key={report.id} onMouseEnter={() => setHoveredCard(report.id)} onMouseLeave={() => setHoveredCard(null)}
+                <div key={report.id} className="premium-report-card motion-stagger-item" onMouseEnter={() => setHoveredCard(report.id)} onPointerMove={handlePremiumPointerMove} onMouseLeave={(event) => { setHoveredCard(null); resetPremiumPointer(event); }}
                   style={{
                     background: theme.bgCard, borderRadius: 20, padding: 0, overflow: "hidden",
                     border: `1.5px solid ${isHovered ? (dark ? colors.darkText + "44" : colors.accent + "44") : theme.border}`,
-                    transition: "all .3s cubic-bezier(.4,0,.2,1)",
-                    transform: isHovered ? "translateY(-4px) scale(1.01)" : "none",
-                    boxShadow: isHovered ? `0 20px 40px ${dark ? "rgba(0,0,0,.3)" : colors.accent + "12"}` : "none",
-                    animation: `scaleIn .4s ease-out ${.05 * i}s both`,
                     opacity: isMaintenance ? 0.7 : 1,
+                    "--stagger-index": Math.min(i, 8),
+                    "--spotlight-color": dark ? `${colors.darkText}12` : `${colors.accent}10`,
+                    "--premium-shadow": `0 18px 36px ${dark ? "rgba(0,0,0,.28)" : colors.accent + "12"}`,
+                    viewTransitionName: getReportTransitionName(report.id),
                   }}>
                   {/* Card content */}
                   <div style={{ padding: 24 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
-                      <div style={{ width: 46, height: 46, borderRadius: 14, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center", transition: "transform .3s", transform: isHovered ? "scale(1.1)" : "scale(1)" }}>
+                      <div className="premium-card-icon" style={{ width: 46, height: 46, borderRadius: 14, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="20" height="20" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <button onClick={(e) => toggleFav(report.id, e)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, transition: "transform .2s", transform: isFav ? "scale(1.2)" : "scale(1)" }}>
                           <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFav ? "#FBBF24" : "none"} stroke={isFav ? "#FBBF24" : theme.textMuted} strokeWidth="1.2"/></svg>
                         </button>
+                        {report.version && <span style={{ fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "3px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
                         <StatusBadge status={report.status} dark={dark}/>
                       </div>
                     </div>
@@ -3689,7 +4043,7 @@ function Dashboard({ user, onLogout }) {
                       {isMaintenance ? (
                         <><svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg> No disponible</>
                       ) : (
-                        <><svg width="14" height="14" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg> Abrir reporte</>
+                        <><svg className="premium-card-arrow" width="14" height="14" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg> Abrir reporte</>
                       )}
                     </button>
                     <button onClick={() => openDetailPanel(report)}
@@ -3727,7 +4081,7 @@ function Dashboard({ user, onLogout }) {
           </>
           )}
 
-          {displayReports.length === 0 && activeView !== "metrics" && activeView !== "requests" && (
+          {displayReports.length === 0 && !["metrics", "requests", "admin", "biops", "audit"].includes(activeView) && (
             <div style={{ textAlign: "center", padding: 60, animation: "fadeUp .4s ease-out" }}>
               <svg width="56" height="56" viewBox="0 0 48 48" style={{ color: theme.border, marginBottom: 16 }}><circle cx="20" cy="20" r="14" stroke="currentColor" strokeWidth="2" fill="none"/><line x1="30" y1="30" x2="40" y2="40" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               <p style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>

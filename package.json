@@ -6,13 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "@azure/msal-browser": "^3.6.0",
-    "powerbi-client": "^2.23.1"
+    "powerbi-client": "^2.23.1",
+    "ldrs": "^1.1.9"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",
