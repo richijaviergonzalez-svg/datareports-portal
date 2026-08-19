@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Hourglass } from "ldrs/react";
+import "ldrs/react/Hourglass.css";
 import "./styles/motion.css";
 import {
   ALL_CATEGORIES,
@@ -401,9 +403,8 @@ function PowerBIEmbed({ report, dark }) {
             </div>
           </div>
           <div className="report-loading-focus">
-            <div className="portal-hourglass" role="status" aria-label={`Abriendo ${report.name}`} style={{ "--uib-size": "45px", "--uib-color": dark ? T.tealLight : T.teal, "--uib-speed": "1.75s", "--uib-bg-opacity": 0.1 }}>
-              <div className="portal-hourglass-half"/>
-              <div className="portal-hourglass-half"/>
+            <div className="portal-hourglass-loader" role="status" aria-label={`Abriendo ${report.name}`}>
+              <Hourglass size={40} bgOpacity={0.1} speed={1.75} color={dark ? "#E8ECF4" : "black"}/>
             </div>
             <div style={{ textAlign: "center" }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: dark ? "#E8ECF4" : "#111827" }}>Abriendo reporte</p>
