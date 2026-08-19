@@ -3118,6 +3118,58 @@ function Dashboard({ user, onLogout }) {
     </div>
   );
 
+  const renderReportActionBar = (report, isFavorite) => {
+    const actions = [
+      {
+        label: "Favorito",
+        title: isFavorite ? "Quitar de favoritos" : "Agregar a favoritos",
+        onClick: (event) => toggleFav(report.id, event),
+        color: isFavorite ? "#F59E0B" : theme.textSecondary,
+        active: isFavorite,
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFavorite ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.2"/></svg>,
+      },
+      {
+        label: "Problema",
+        title: "Reportar un problema",
+        onClick: () => openActionModal("issue", report),
+        color: "#EF4444",
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+      },
+      {
+        label: "Cambio",
+        title: "Solicitar un cambio",
+        onClick: () => openActionModal("change", report),
+        color: "#6366F1",
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/></svg>,
+      },
+      {
+        label: "Copiar",
+        title: "Copiar enlace del reporte",
+        onClick: () => copyReportLink(report),
+        color: T.teal,
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M6.5 9.5l3-3M7 4.5l.8-.8a3 3 0 0 1 4.2 4.2l-.8.8M9 11.5l-.8.8A3 3 0 0 1 4 8.1l.8-.8" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      },
+    ];
+
+    return (
+      <div aria-label="Acciones del reporte" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6, marginTop: 14 }}>
+        {actions.map((action) => (
+          <button key={action.label} type="button" title={action.title} onClick={action.onClick} style={{
+            minWidth: 0, height: 34, padding: "0 8px", borderRadius: 8,
+            border: `1px solid ${action.active ? action.color + "55" : theme.border}`,
+            background: action.active ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard,
+            color: action.color, cursor: "pointer", transition: "border-color .18s ease, background .18s ease, transform .18s ease",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+            fontSize: 10, fontWeight: 500, fontFamily: "'Outfit', system-ui",
+          }}>
+            <span style={{ display: "flex", flexShrink: 0 }}>{action.icon}</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{action.label}</span>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
   const renderViewerDetailPanel = () => detailReport && (
     <div style={{ position: "fixed", inset: 0, zIndex: 120, display: "flex", justifyContent: "flex-end" }} onClick={() => closeDetailPanel()}>
       <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.38)", backdropFilter: "blur(3px)" }}/>
@@ -3141,6 +3193,7 @@ function Dashboard({ user, onLogout }) {
                 <StatusBadge status={detailReport.status} dark={dark}/>
                 <HealthBadge report={detailReport} dark={dark}/>
               </div>
+              {renderReportActionBar(detailReport, isFav)}
             </div>
             <div style={{ flex: 1, overflow: "auto", padding: "20px 28px 28px" }}>
               <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Descripción</p>
@@ -3169,12 +3222,6 @@ function Dashboard({ user, onLogout }) {
                   ))}
                 </div>
               )}
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <button onClick={(e) => toggleFav(detailReport.id, e)} style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: isFav ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard, color: theme.text, cursor: "pointer", textAlign: "left" }}>{isFav ? "Quitar de favoritos" : "Agregar a favoritos"}</button>
-                <button onClick={() => openActionModal("issue", detailReport)} style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.text, cursor: "pointer", textAlign: "left" }}>Reportar problema</button>
-                <button onClick={() => openActionModal("change", detailReport)} style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.text, cursor: "pointer", textAlign: "left" }}>Solicitar cambio</button>
-                <button onClick={() => copyReportLink(detailReport)} style={{ padding: "12px 16px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.text, cursor: "pointer", textAlign: "left" }}>Copiar link del reporte</button>
-              </div>
             </div>
             <div style={{ padding: "16px 28px", borderTop: `1px solid ${theme.border}`, display: "flex", gap: 10 }}>
               {!isMaintenance && <button onClick={() => { closeDetailPanel({ pushHistory: false }); openReport(detailReport); }} style={{ flex: 1, padding: "14px", borderRadius: 14, border: "none", background: `linear-gradient(135deg, ${T.teal}, ${T.tealDark})`, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Abrir reporte</button>}
@@ -3606,6 +3653,7 @@ function Dashboard({ user, onLogout }) {
                         <StatusBadge status={detailReport.status} dark={dark}/>
                         <HealthBadge report={detailReport} dark={dark}/>
                       </div>
+                      {renderReportActionBar(detailReport, isFav)}
                     </div>
 
                     {/* Scrollable content */}
@@ -3653,63 +3701,26 @@ function Dashboard({ user, onLogout }) {
                         ))}
                       </div>
 
-                      {/* Technical info */}
-                      <div style={{ background: theme.bgSurface, borderRadius: 14, padding: 18, marginBottom: 20, border: `1px solid ${theme.border}` }}>
-                        <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Información técnica</p>
-                        {[
-                          { l: "Report ID", v: detailReport.id },
-                          { l: "Workspace ID", v: detailReport.groupId || "No configurado" },
-                          { l: "Categoría", v: detailReport.category },
-                          { l: "Estado actual", v: detailReport.status === "live" ? "Activo" : detailReport.status === "draft" ? "Borrador" : "En mantenimiento" },
-                          { l: "Criticidad", v: detailReport.criticality ? String(detailReport.criticality).charAt(0).toUpperCase() + String(detailReport.criticality).slice(1) : "Media" },
-                          { l: "Actualización", v: detailReport.refreshFrequency || "Según dataset" },
-                          { l: "Última edición", v: detailReport.updatedAt ? new Date(detailReport.updatedAt).toLocaleString("es-PY") : "Sin registro" },
-                        ].map((item, i, arr) => (
-                          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "8px 0", borderBottom: i < arr.length - 1 ? `1px solid ${theme.border}` : "none" }}>
-                            <span style={{ fontSize: 12, color: theme.textMuted }}>{item.l}</span>
-                            <span style={{ fontSize: 11, color: T.teal, fontFamily: "'JetBrains Mono', monospace", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{item.v}</span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Secondary actions */}
-                      <div style={{ marginBottom: 20 }}>
-                        <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>Acciones</p>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                          <button onClick={(e) => { toggleFav(detailReport.id, e); }} style={{
-                            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12,
-                            border: `1px solid ${theme.border}`, background: isFav ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard,
-                            cursor: "pointer", transition: "all .2s", width: "100%", textAlign: "left",
-                          }}>
-                            <svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFav ? "#FBBF24" : "none"} stroke={isFav ? "#FBBF24" : theme.textMuted} strokeWidth="1.2"/></svg>
-                            <span style={{ fontSize: 13, color: theme.text }}>{isFav ? "Quitar de favoritos" : "Agregar a favoritos"}</span>
-                          </button>
-                          <button onClick={() => openActionModal("issue", detailReport)} style={{
-                            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12,
-                            border: `1px solid ${theme.border}`, background: theme.bgCard,
-                            cursor: "pointer", transition: "all .2s", width: "100%", textAlign: "left",
-                          }}>
-                            <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: "#EF4444" }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                            <span style={{ fontSize: 13, color: theme.text }}>Reportar problema</span>
-                          </button>
-                          <button onClick={() => openActionModal("change", detailReport)} style={{
-                            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12,
-                            border: `1px solid ${theme.border}`, background: theme.bgCard,
-                            cursor: "pointer", transition: "all .2s", width: "100%", textAlign: "left",
-                          }}>
-                            <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: "#6366F1" }}><path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/></svg>
-                            <span style={{ fontSize: 13, color: theme.text }}>Solicitar cambio</span>
-                          </button>
-                          <button onClick={() => copyReportLink(detailReport)} style={{
-                            display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 12,
-                            border: `1px solid ${theme.border}`, background: theme.bgCard,
-                            cursor: "pointer", transition: "all .2s", width: "100%", textAlign: "left",
-                          }}>
-                            <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: T.teal }}><path d="M6.5 9.5l3-3M7 4.5l.8-.8a3 3 0 0 1 4.2 4.2l-.8.8M9 11.5l-.8.8A3 3 0 0 1 4 8.1l.8-.8" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                            <span style={{ fontSize: 13, color: theme.text }}>Copiar link del reporte</span>
-                          </button>
+                      {/* Technical info is restricted to portal administrators. */}
+                      {isAdmin(user.email) && (
+                        <div style={{ background: theme.bgSurface, borderRadius: 14, padding: 18, marginBottom: 20, border: `1px solid ${theme.border}` }}>
+                          <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>Información técnica</p>
+                          {[
+                            { l: "Report ID", v: detailReport.id },
+                            { l: "Workspace ID", v: detailReport.groupId || "No configurado" },
+                            { l: "Categoría", v: detailReport.category },
+                            { l: "Estado actual", v: detailReport.status === "live" ? "Activo" : detailReport.status === "draft" ? "Borrador" : "En mantenimiento" },
+                            { l: "Criticidad", v: detailReport.criticality ? String(detailReport.criticality).charAt(0).toUpperCase() + String(detailReport.criticality).slice(1) : "Media" },
+                            { l: "Actualización", v: detailReport.refreshFrequency || "Según dataset" },
+                            { l: "Última edición", v: detailReport.updatedAt ? new Date(detailReport.updatedAt).toLocaleString("es-PY") : "Sin registro" },
+                          ].map((item, i, arr) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "8px 0", borderBottom: i < arr.length - 1 ? `1px solid ${theme.border}` : "none" }}>
+                              <span style={{ fontSize: 12, color: theme.textMuted }}>{item.l}</span>
+                              <span style={{ fontSize: 11, color: T.teal, fontFamily: "'JetBrains Mono', monospace", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{item.v}</span>
+                            </div>
+                          ))}
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* Footer with main action */}
