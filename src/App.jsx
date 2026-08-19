@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import "./styles/motion.css";
 import {
   ALL_CATEGORIES,
   DEFAULT_REPORTS,
@@ -66,6 +67,12 @@ import {
   updateBiRequestStatus,
 } from "./lib/biApi.js";
 import { loadPortalState, savePortalState } from "./lib/storage.js";
+import {
+  getReportTransitionName,
+  handlePremiumPointerMove,
+  resetPremiumPointer,
+  runPortalTransition,
+} from "./lib/motion.js";
 
 /*
 ╔══════════════════════════════════════════════════════════════╗
@@ -373,31 +380,26 @@ function PowerBIEmbed({ report, dark }) {
       }}
     >
       {loading && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            background: dark ? "#0D0F14" : "#F9FAFB",
-            zIndex: 5,
-          }}
-        >
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              border: `3px solid ${dark ? "#2A2F3C" : "#E5E7EB"}`,
-              borderTopColor: "#0D9488",
-              borderRadius: "50%",
-              animation: "spin 1s linear infinite",
-              marginBottom: 16,
-            }}
-          />
-          <p style={{ fontSize: 13, color: dark ? "#8B93A7" : "#6B7280" }}>Cargando reporte...</p>
-          <p style={{ fontSize: 11, color: dark ? "#5C6478" : "#9CA3AF", marginTop: 4 }}>{report.name}</p>
+        <div className="report-loading-shell" aria-live="polite" aria-label={`Cargando ${report.name}`} style={{
+          background: dark ? "#0D0F14" : "#F9FAFB",
+          "--skeleton-base": dark ? "#1A1F29" : "#E9EEF5",
+          "--skeleton-highlight": dark ? "#252C39" : "#F8FAFC",
+          "--skeleton-border": dark ? "#2A2F3C" : "#E3E8F0",
+          "--skeleton-surface": dark ? "rgba(30,34,45,.78)" : "rgba(255,255,255,.78)",
+        }}>
+          <div className="report-loading-toolbar"/>
+          <div className="report-loading-panel">
+            <div className="report-loading-chart">
+              {[42, 68, 54, 82, 61, 74].map((height, index) => <span key={index} className="report-loading-tile" style={{ height: `${height}%` }}/>) }
+            </div>
+            <div className="report-loading-copy">
+              <div className="report-loading-line" style={{ width: "58%" }}/>
+              <div className="report-loading-line" style={{ width: "86%" }}/>
+              <div className="report-loading-line" style={{ width: "72%" }}/>
+              <div className="report-loading-line" style={{ width: "94%", height: 80 }}/>
+              <p style={{ marginTop: "auto", fontSize: 11, color: dark ? "#6B7288" : "#98A2B3" }}>Preparando {report.name}...</p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1066,17 +1068,6 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
 // ========================
 const globalStyles = `
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-@keyframes fadeUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
-@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
-@keyframes slideInLeft { from { opacity:0; transform:translateX(-20px); } to { opacity:1; transform:translateX(0); } }
-@keyframes slideInRight { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
-@keyframes spin { to { transform:rotate(360deg); } }
-@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
-@keyframes scaleIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
-@keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
-@keyframes breathe { 0%,100% { box-shadow: 0 0 0 0 rgba(13,148,136,0); } 50% { box-shadow: 0 0 0 6px rgba(13,148,136,0.08); } }
-@keyframes adminProgress { from { transform:translateX(-110%); } to { transform:translateX(260%); } }
-.admin-save-progress { animation:adminProgress 1.1s cubic-bezier(.4,0,.2,1) infinite; }
 * { box-sizing:border-box; margin:0; padding:0; }
 .powerbi-embed-shell iframe,
 .powerbi-embed-shell > div,
@@ -1155,7 +1146,7 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
     <div className={`sidebar-responsive ${mobileOpen ? "mobile-open" : ""}`} style={{
       width: w, minHeight: "100vh", background: theme.bgCard, borderRight: `1px solid ${theme.border}`,
       display: "flex", flexDirection: "column", transition: "width .3s cubic-bezier(.4,0,.2,1)",
-      position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 30, overflow: "hidden",
+      position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 30, overflow: "hidden", viewTransitionName: "portal-sidebar",
     }}>
       {/* Logo + collapse */}
       <div style={{ padding: collapsed ? "16px 12px" : "16px 20px", borderBottom: `1px solid ${theme.border}`, display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "space-between", minHeight: 64 }}>
@@ -1172,12 +1163,13 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
           {navItems.map(item => {
             const active = activeView === item.id;
             return (
-              <button key={item.id} onClick={() => { setActiveView(item.id); if (onMobileClose) onMobileClose(); }} style={{
+              <button key={item.id} className={`sidebar-nav-item motion-control ${active ? "is-active" : ""}`} onClick={() => { setActiveView(item.id); if (onMobileClose) onMobileClose(); }} style={{
                 display: "flex", alignItems: "center", gap: 10, padding: collapsed ? "10px" : "10px 12px",
                 borderRadius: 10, border: "none", width: "100%", justifyContent: collapsed ? "center" : "flex-start",
                 background: active ? (dark ? T.teal + "18" : T.tealBg) : "transparent",
                 color: active ? T.teal : theme.textSecondary,
                 cursor: "pointer", transition: "all .2s", fontSize: 13, fontWeight: active ? 500 : 400,
+                viewTransitionName: active ? "sidebar-active-view" : undefined,
               }}>
                 {item.icon}
                 {!collapsed && <span>{item.label}</span>}
@@ -1195,11 +1187,12 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
               const colors = categoryColors[cat] || categoryColors.Comercial;
               const active = activeCategory === cat;
               return (
-                <button key={cat} onClick={() => { setActiveCategory(active ? "Todos" : cat); setActiveView("dashboard"); if (onMobileClose) onMobileClose(); }} style={{
+                <button key={cat} className={`sidebar-nav-item motion-control ${active ? "is-active" : ""}`} onClick={() => { const nextCategory = active ? "Todos" : cat; if (activeView === "dashboard") runPortalTransition(() => setActiveCategory(nextCategory), "filter"); else { setActiveCategory(nextCategory); setActiveView("dashboard"); } if (onMobileClose) onMobileClose(); }} style={{
                   display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8,
                   border: "none", width: "100%", background: active ? (dark ? colors.darkBg : colors.bg) : "transparent",
                   color: active ? (dark ? colors.darkText : colors.accent) : theme.textMuted,
                   cursor: "pointer", fontSize: 12, transition: "all .2s", textAlign: "left",
+                  viewTransitionName: active ? "sidebar-active-category" : undefined,
                 }}>
                   <div style={{ width: 6, height: 6, borderRadius: 3, background: dark ? colors.darkText : colors.accent, opacity: active ? 1 : 0.4 }}/>
                   {cat}
@@ -1516,15 +1509,15 @@ function HomeFocusPanel({ dark, reports, requests, favorites, recentReports, man
         {quickReports.map((report, index) => {
           const colors = categoryColors[report.category] || categoryColors.Comercial;
           return (
-            <button key={report.id} onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", animation: `scaleIn .25s ease-out ${.035 * index}s both` }}>
-              <span style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button key={report.id} className="quick-report-card motion-stagger-item" onClick={() => onOpenReport(report)} style={{ display: "grid", gridTemplateColumns: "38px minmax(0, 1fr) 16px", gap: 12, alignItems: "center", textAlign: "left", padding: "13px 14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", "--stagger-index": Math.min(index, 7) }}>
+              <span className="quick-report-icon" style={{ width: 38, height: 38, borderRadius: 12, background: dark ? colors.darkBg : colors.bg, color: dark ? colors.darkText : colors.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <svg width="17" height="17" viewBox="0 0 22 22">{iconPaths[report.icon]}</svg>
               </span>
               <span style={{ minWidth: 0 }}>
                 <span style={{ display: "block", fontSize: 13, color: theme.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</span>
                 <span style={{ display: "block", fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.category}</span>
               </span>
-              <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <svg className="quick-report-arrow" width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
           );
         })}
@@ -2278,29 +2271,35 @@ function Dashboard({ user, onLogout }) {
 
   const navigateToView = useCallback((view, options = {}) => {
     const { pushHistory = true } = options;
-    setActiveView(view);
-    setSelectedRequest(null);
-    if (pushHistory) {
-      pushUiState({ activeView: view, selectedReportId: null, detailReportId: null, showAdmin: false });
-    }
+    runPortalTransition(() => {
+      setActiveView(view);
+      setSelectedRequest(null);
+      if (pushHistory) {
+        pushUiState({ activeView: view, selectedReportId: null, detailReportId: null, showAdmin: false });
+      }
+    }, "page");
   }, [pushUiState]);
 
   const openAdminPanel = useCallback((options = {}) => {
     const { pushHistory = true } = options;
-    setShowAdmin(false);
-    setActiveView("admin");
-    if (pushHistory) {
-      pushUiState({ activeView: "admin", showAdmin: false, selectedReportId: null, detailReportId: null });
-    }
+    runPortalTransition(() => {
+      setShowAdmin(false);
+      setActiveView("admin");
+      if (pushHistory) {
+        pushUiState({ activeView: "admin", showAdmin: false, selectedReportId: null, detailReportId: null });
+      }
+    }, "page");
   }, [pushUiState]);
 
   const closeAdminPanel = useCallback((options = {}) => {
     const { pushHistory = true } = options;
-    setShowAdmin(false);
-    setActiveView("dashboard");
-    if (pushHistory) {
-      pushUiState({ activeView: "dashboard", showAdmin: false, selectedReportId: null, detailReportId: null });
-    }
+    runPortalTransition(() => {
+      setShowAdmin(false);
+      setActiveView("dashboard");
+      if (pushHistory) {
+        pushUiState({ activeView: "dashboard", showAdmin: false, selectedReportId: null, detailReportId: null });
+      }
+    }, "page");
   }, [pushUiState]);
 
   const openDetailPanel = useCallback((report, options = {}) => {
@@ -2322,11 +2321,13 @@ function Dashboard({ user, onLogout }) {
 
   const closeReportViewer = useCallback((options = {}) => {
     const { pushHistory = true } = options;
-    setSelectedReport(null);
-    setDetailReport(null);
-    if (pushHistory) {
-      pushUiState({ selectedReportId: null, detailReportId: null, showAdmin: false });
-    }
+    runPortalTransition(() => {
+      setSelectedReport(null);
+      setDetailReport(null);
+      if (pushHistory) {
+        pushUiState({ selectedReportId: null, detailReportId: null, showAdmin: false });
+      }
+    }, "report");
   }, [pushUiState]);
 
   useEffect(() => {
@@ -2592,12 +2593,14 @@ function Dashboard({ user, onLogout }) {
       return;
     }
     const { pushHistory = true } = options;
-    setReportZoom(100);
-    setSelectedReport(report);
-    setDetailReport(null);
-    if (pushHistory) {
-      pushUiState({ selectedReportId: report.id, detailReportId: null, showAdmin: false });
-    }
+    runPortalTransition(() => {
+      setReportZoom(100);
+      setSelectedReport(report);
+      setDetailReport(null);
+      if (pushHistory) {
+        pushUiState({ selectedReportId: report.id, detailReportId: null, showAdmin: false });
+      }
+    }, "report");
     const nextAuditEvents = recordAuditEvent("report_opened", {
       id: report.id,
       name: report.name,
@@ -3424,7 +3427,7 @@ function Dashboard({ user, onLogout }) {
     const printReport = () => { const c = document.getElementById(`pbi-container-${selectedReport.id}`); const service = getLoadedPowerBiService(); if (c && service) { try { const e = service.get(c); if (e) e.print(); } catch(err) {} } };
 
     return (
-      <div style={{ fontFamily: "'Outfit', system-ui", height: "100vh", minHeight: 0, overflow: "hidden", background: theme.bg, display: "flex", flexDirection: "column" }}>
+      <div className="portal-shell motion-page" style={{ fontFamily: "'Outfit', system-ui", height: "100vh", minHeight: 0, overflow: "hidden", background: theme.bg, display: "flex", flexDirection: "column", viewTransitionName: getReportTransitionName(selectedReport.id) }}>
         <style>{globalStyles}</style>
         {renderViewerDetailPanel()}
         {renderActionModal()}
@@ -3433,7 +3436,7 @@ function Dashboard({ user, onLogout }) {
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", background: theme.bgCard, borderBottom: `1px solid ${theme.border}`, flexShrink: 0, flexWrap: "wrap", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={() => closeReportViewer()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", border: `1px solid ${theme.border}`, borderRadius: 10, background: theme.bgSurface, cursor: "pointer", fontSize: 12, color: theme.textSecondary, transition: "all .2s" }}>
+            <button className="motion-control" onClick={() => closeReportViewer()} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", border: `1px solid ${theme.border}`, borderRadius: 10, background: theme.bgSurface, cursor: "pointer", fontSize: 12, color: theme.textSecondary, transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
               Volver
             </button>
@@ -3453,10 +3456,10 @@ function Dashboard({ user, onLogout }) {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <button onClick={(e) => toggleFav(selectedReport.id, e)} title={isFav ? "Quitar de favoritos" : "Agregar a favoritos"} style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: isFav ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
+            <button className="motion-control" onClick={(e) => toggleFav(selectedReport.id, e)} aria-label={isFav ? "Quitar de favoritos" : "Agregar a favoritos"} data-tooltip={isFav ? "Quitar de favoritos" : "Agregar a favoritos"} style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: isFav ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFav ? "#FBBF24" : "none"} stroke={isFav ? "#FBBF24" : theme.textMuted} strokeWidth="1.2"/></svg>
             </button>
-            <button onClick={() => openDetailPanel(selectedReport)} title="Ver detalles" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
+            <button className="motion-control" onClick={() => openDetailPanel(selectedReport)} aria-label="Ver detalles" data-tooltip="Ver detalles" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 7v4m0-6.5V5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
             <VersionBadge version={selectedReport.version} dark={dark}/>
@@ -3473,17 +3476,17 @@ function Dashboard({ user, onLogout }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ fontSize: 10, color: theme.textMuted, marginRight: 4 }}>Zoom:</span>
-            <button onClick={() => zoomReport(reportZoom - 10)} disabled={reportZoom <= 60} title="Alejar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom <= 60 ? "not-allowed" : "pointer", color: reportZoom <= 60 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>-</button>
+            <button className="motion-control" onClick={() => zoomReport(reportZoom - 10)} disabled={reportZoom <= 60} aria-label="Alejar" data-tooltip="Alejar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom <= 60 ? "not-allowed" : "pointer", color: reportZoom <= 60 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>-</button>
             <span style={{ minWidth: 42, textAlign: "center", fontSize: 10, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{reportZoom}%</span>
-            <button onClick={() => zoomReport(reportZoom + 10)} disabled={reportZoom >= 180} title="Acercar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom >= 180 ? "not-allowed" : "pointer", color: reportZoom >= 180 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>+</button>
+            <button className="motion-control" onClick={() => zoomReport(reportZoom + 10)} disabled={reportZoom >= 180} aria-label="Acercar" data-tooltip="Acercar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: reportZoom >= 180 ? "not-allowed" : "pointer", color: reportZoom >= 180 ? theme.textMuted : theme.textSecondary, fontSize: 16, lineHeight: 1, fontWeight: 700 }}>+</button>
             <div style={{ width: 1, height: 20, background: theme.border, margin: "0 6px" }}/>
-            <button onClick={reloadReport} title="Recargar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
+            <button className="motion-control" onClick={reloadReport} aria-label="Recargar reporte" data-tooltip="Recargar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
               <svg width="13" height="13" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4M2 4V8h4M14 12V8h-4" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button onClick={printReport} title="Imprimir / Guardar PDF" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
+            <button className="motion-control" onClick={printReport} aria-label="Imprimir o guardar PDF" data-tooltip="Imprimir / Guardar PDF" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
               <svg width="13" height="13" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M4 4V2h8v2m-8 4H2v5h2m8 0h2V8h-2M4 11h8v3H4v-3z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button onClick={fullscreenToggle} title="Pantalla completa" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
+            <button className="motion-control" onClick={fullscreenToggle} aria-label="Pantalla completa" data-tooltip="Pantalla completa" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s" }}>
               <svg width="13" height="13" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 5V3a1 1 0 0 1 1-1h2m6 0h2a1 1 0 0 1 1 1v2m0 6v2a1 1 0 0 1-1 1h-2m-6 0H3a1 1 0 0 1-1-1v-2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>
             </button>
           </div>
@@ -3529,7 +3532,7 @@ function Dashboard({ user, onLogout }) {
 
   // MAIN VIEW WITH SIDEBAR
   return (
-    <div style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
+    <div className="portal-shell" style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
       <style>{globalStyles}</style>
       {showIncidentEditor && <IncidentEditor dark={dark} incidents={incidents} onSave={saveSharedIncidents} onClose={() => setShowIncidentEditor(false)}/>}
       {showNotif && <div onClick={() => setShowNotif(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }}/>}
@@ -3578,10 +3581,10 @@ function Dashboard({ user, onLogout }) {
       {/* Main content area */}
       <div className="main-content-responsive" style={{ marginLeft: sidebarWidth, transition: "margin-left .3s cubic-bezier(.4,0,.2,1)", minHeight: "100vh" }}>
         {/* Top bar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: theme.bgCard, borderBottom: `1px solid ${theme.border}`, position: "sticky", top: 0, zIndex: 20, gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: theme.bgCard, borderBottom: `1px solid ${theme.border}`, position: "sticky", top: 0, zIndex: 20, gap: 8, viewTransitionName: "portal-topbar" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {/* Mobile menu button */}
-            <button className="mobile-menu-btn" onClick={() => setMobileSidebarOpen(true)} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "none", alignItems: "center", justifyContent: "center" }}>
+            <button className="mobile-menu-btn motion-control" onClick={() => setMobileSidebarOpen(true)} aria-label="Abrir navegación" data-tooltip="Abrir navegación" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "none", alignItems: "center", justifyContent: "center" }}>
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
             <h2 style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>
@@ -3592,7 +3595,7 @@ function Dashboard({ user, onLogout }) {
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button className="topbar-search" onClick={() => setCmdK(true)} aria-label="Abrir búsqueda global" title="Búsqueda global (Ctrl+K)" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 12, background: theme.bgSurface, border: `1px solid ${theme.border}`, cursor: "pointer", transition: "all .2s" }}>
+            <button className="topbar-search motion-control" onClick={() => setCmdK(true)} aria-label="Abrir búsqueda global" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 12, background: theme.bgSurface, border: `1px solid ${theme.border}`, cursor: "pointer", transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               <span style={{ fontSize: 12, color: theme.textMuted }}>Buscar...</span>
               <span style={{ fontSize: 10, color: theme.textMuted, background: theme.bgCard, padding: "2px 6px", borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${theme.border}` }}>Ctrl K</span>
@@ -3600,7 +3603,7 @@ function Dashboard({ user, onLogout }) {
 
             {/* Notification bell */}
             <div style={{ position: "relative" }}>
-              <button onClick={() => setShowNotif(!showNotif)} aria-label="Abrir notificaciones" title="Notificaciones" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", transition: "all .2s" }}>
+              <button className="motion-control" onClick={() => setShowNotif(!showNotif)} aria-label="Abrir notificaciones" data-tooltip="Notificaciones" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", transition: "all .2s" }}>
                 <svg width="15" height="15" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M8 1.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 8.5v-3a4 4 0 0 0-4-4z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M6 13a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>
                 {unreadCount > 0 && <div style={{ position: "absolute", top: 5, right: 5, width: 8, height: 8, borderRadius: 4, background: "#EF4444", border: `2px solid ${theme.bgCard}` }}/>}
               </button>
@@ -3635,7 +3638,7 @@ function Dashboard({ user, onLogout }) {
               )}
             </div>
 
-            <button onClick={() => setDark(!dark)} aria-label={dark ? "Activar tema claro" : "Activar tema oscuro"} title={dark ? "Tema claro" : "Tema oscuro"} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
+            <button className="motion-control" onClick={() => setDark(!dark)} aria-label={dark ? "Activar tema claro" : "Activar tema oscuro"} data-tooltip={dark ? "Tema claro" : "Tema oscuro"} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
               {dark ? <svg width="15" height="15" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.5" stroke="#FBBF24" strokeWidth="1.5" fill="none"/></svg> : <svg width="15" height="15" viewBox="0 0 16 16"><path d="M14 9.3A6 6 0 0 1 6.7 2 6 6 0 1 0 14 9.3z" stroke="#6B7280" strokeWidth="1.5" fill="none"/></svg>}
             </button>
             {isAdmin(user.email) && (
@@ -3647,7 +3650,7 @@ function Dashboard({ user, onLogout }) {
           </div>
         </div>
 
-        <div style={{ padding: "24px 28px" }}>
+        <div key={activeView} className="motion-page" style={{ padding: "24px 28px" }}>
           {previewUserEmail && isAdmin(user.email) && activeView !== "admin" && (
             <div style={{ marginBottom: 14, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "10" : T.tealBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div><strong style={{ color: theme.text, fontSize: 12 }}>Vista de permisos</strong><span style={{ color: theme.textMuted, fontSize: 11 }}> · Estás viendo el catálogo disponible para {previewUserEmail}</span></div>
@@ -3932,7 +3935,7 @@ function Dashboard({ user, onLogout }) {
             {/* Catalog toolbar */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18, alignItems: "center", padding: 10, borderRadius: 14, background: theme.bgCard, border: `1px solid ${theme.border}`, animation: "fadeUp .3s ease-out" }}>
               {/* Inline search */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: theme.bgSurface, border: `1px solid ${theme.border}`, flex: "1 1 240px", minWidth: 220 }}>
+              <div className="portal-search-shell" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: theme.bgSurface, border: `1px solid ${theme.border}`, flex: "1 1 240px", minWidth: 220 }}>
                 <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted, flexShrink: 0 }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                 <input type="text" placeholder="Buscar por nombre, descripción o categoría..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                   style={{ border: "none", background: "transparent", outline: "none", fontSize: 12, color: theme.text, width: "100%", fontFamily: "'Outfit', system-ui" }}/>
@@ -3941,14 +3944,14 @@ function Dashboard({ user, onLogout }) {
 
               <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
                 Categoría
-                <select value={activeCategory} onChange={e => setActiveCategory(e.target.value)} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                <select className="motion-control" value={activeCategory} onChange={e => { const value = e.target.value; runPortalTransition(() => setActiveCategory(value), "filter"); }} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
                   {categories.map(cat => <option key={cat} value={cat}>{cat === "Todos" ? "Todas" : cat}</option>)}
                 </select>
               </label>
 
               <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
                 Estado
-                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                <select className="motion-control" value={statusFilter} onChange={e => { const value = e.target.value; runPortalTransition(() => setStatusFilter(value), "filter"); }} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
                   <option value="all">Todos</option>
                   <option value="live">Activos</option>
                   {isAdmin(user.email) && <option value="draft">Borradores</option>}
@@ -3958,7 +3961,7 @@ function Dashboard({ user, onLogout }) {
 
               <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
                 Orden
-                <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                <select className="motion-control" value={sortBy} onChange={e => { const value = e.target.value; runPortalTransition(() => setSortBy(value), "filter"); }} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
                   <option value="name">Nombre A-Z</option>
                   <option value="category">Categoría</option>
                   <option value="status">Estado</option>
@@ -3966,7 +3969,7 @@ function Dashboard({ user, onLogout }) {
               </label>
 
               {(searchQuery || activeCategory !== "Todos" || statusFilter !== "all" || sortBy !== "name") && (
-                <button onClick={() => { setSearchQuery(""); setActiveCategory("Todos"); setStatusFilter("all"); setSortBy("name"); }} style={{ height: 34, padding: "0 11px", borderRadius: 9, border: `1px solid ${theme.border}`, background: "transparent", color: T.teal, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Limpiar</button>
+                <button className="motion-control" onClick={() => runPortalTransition(() => { setSearchQuery(""); setActiveCategory("Todos"); setStatusFilter("all"); setSortBy("name"); }, "filter")} style={{ height: 34, padding: "0 11px", borderRadius: 9, border: `1px solid ${theme.border}`, background: "transparent", color: T.teal, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Limpiar</button>
               )}
             </div>
 
@@ -3983,20 +3986,20 @@ function Dashboard({ user, onLogout }) {
               const isFav = favorites.includes(report.id);
               const isMaintenance = report.status === "maintenance";
               return (
-                <div key={report.id} onMouseEnter={() => setHoveredCard(report.id)} onMouseLeave={() => setHoveredCard(null)}
+                <div key={report.id} className="premium-report-card motion-stagger-item" onMouseEnter={() => setHoveredCard(report.id)} onPointerMove={handlePremiumPointerMove} onMouseLeave={(event) => { setHoveredCard(null); resetPremiumPointer(event); }}
                   style={{
                     background: theme.bgCard, borderRadius: 20, padding: 0, overflow: "hidden",
                     border: `1.5px solid ${isHovered ? (dark ? colors.darkText + "44" : colors.accent + "44") : theme.border}`,
-                    transition: "all .3s cubic-bezier(.4,0,.2,1)",
-                    transform: isHovered ? "translateY(-4px) scale(1.01)" : "none",
-                    boxShadow: isHovered ? `0 20px 40px ${dark ? "rgba(0,0,0,.3)" : colors.accent + "12"}` : "none",
-                    animation: `scaleIn .4s ease-out ${.05 * i}s both`,
                     opacity: isMaintenance ? 0.7 : 1,
+                    "--stagger-index": Math.min(i, 8),
+                    "--spotlight-color": dark ? `${colors.darkText}12` : `${colors.accent}10`,
+                    "--premium-shadow": `0 18px 36px ${dark ? "rgba(0,0,0,.28)" : colors.accent + "12"}`,
+                    viewTransitionName: getReportTransitionName(report.id),
                   }}>
                   {/* Card content */}
                   <div style={{ padding: 24 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
-                      <div style={{ width: 46, height: 46, borderRadius: 14, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center", transition: "transform .3s", transform: isHovered ? "scale(1.1)" : "scale(1)" }}>
+                      <div className="premium-card-icon" style={{ width: 46, height: 46, borderRadius: 14, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="20" height="20" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -4029,7 +4032,7 @@ function Dashboard({ user, onLogout }) {
                       {isMaintenance ? (
                         <><svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3m0 2.5V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg> No disponible</>
                       ) : (
-                        <><svg width="14" height="14" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg> Abrir reporte</>
+                        <><svg className="premium-card-arrow" width="14" height="14" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg> Abrir reporte</>
                       )}
                     </button>
                     <button onClick={() => openDetailPanel(report)}
