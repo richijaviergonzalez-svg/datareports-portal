@@ -165,17 +165,21 @@
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
+  visibility: hidden;
   transform: translateY(8px) scale(0.985);
   transform-origin: center bottom;
   transition:
     opacity 180ms var(--motion-ease-standard),
-    transform 220ms var(--motion-ease-premium);
+    transform 220ms var(--motion-ease-premium),
+    visibility 0s linear 180ms;
 }
 
 .report-card-preview.is-visible {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
   transform: translateY(0) scale(1);
+  transition-delay: 0s;
 }
 
 .report-card-preview-media {

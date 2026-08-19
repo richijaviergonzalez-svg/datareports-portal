@@ -222,6 +222,8 @@ const Sparkline = ({ data, color, width = 80, height = 28 }) => {
 // ========================
 let powerbiClientPromise = null;
 let loadedPowerbiService = null;
+let powerbiPreloadStarted = false;
+const REPORT_PREVIEW_CACHE_TTL_MS = 15 * 60 * 1000;
 
 function loadPowerBiClient() {
   if (!powerbiClientPromise) {
@@ -244,6 +246,21 @@ function loadPowerBiClient() {
 
 function getLoadedPowerBiService() {
   return loadedPowerbiService;
+}
+
+async function preloadPowerBiResources() {
+  if (powerbiPreloadStarted) return;
+  powerbiPreloadStarted = true;
+  try {
+    const { service } = await loadPowerBiClient();
+    service.preload({
+      type: "report",
+      embedUrl: "https://app.powerbi.com/reportEmbed",
+    });
+  } catch (error) {
+    powerbiPreloadStarted = false;
+    console.warn("Power BI preload failed:", error);
+  }
 }
 
 function PowerBIEmbed({ report, dark, preview = false }) {
@@ -364,7 +381,7 @@ function PowerBIEmbed({ report, dark, preview = false }) {
         }
       }
     };
-  }, [report.id, report.groupId, retryCount]);
+  }, [report.id, report.groupId, report.version, report.updatedAt, retryCount, preview]);
 
   const handleRetry = () => {
     setRetryCount(c => c + 1);
@@ -2242,7 +2259,7 @@ function Dashboard({ user, onLogout }) {
   const incidentsRef = useRef([]);
   const auditPushDedupeRef = useRef({});
   const previewOpenTimerRef = useRef(null);
-  const previewCloseTimerRef = useRef(null);
+  const previewExpiryTimerRef = useRef(null);
   const sharedSyncRef = useRef({
     reports: 0,
     requests: 0,
@@ -2252,9 +2269,9 @@ function Dashboard({ user, onLogout }) {
 
   const clearPreviewTimers = useCallback(() => {
     if (previewOpenTimerRef.current) clearTimeout(previewOpenTimerRef.current);
-    if (previewCloseTimerRef.current) clearTimeout(previewCloseTimerRef.current);
+    if (previewExpiryTimerRef.current) clearTimeout(previewExpiryTimerRef.current);
     previewOpenTimerRef.current = null;
-    previewCloseTimerRef.current = null;
+    previewExpiryTimerRef.current = null;
   }, []);
 
   const showCardPreview = useCallback((reportId, immediate = false) => {
@@ -2273,15 +2290,15 @@ function Dashboard({ user, onLogout }) {
     previewOpenTimerRef.current = null;
     setPreviewCardVisible(false);
     if (immediate) {
-      if (!reportId || previewCardId === reportId) setPreviewCardId(null);
+      setPreviewCardId(null);
       return;
     }
-    if (previewCloseTimerRef.current) clearTimeout(previewCloseTimerRef.current);
-    previewCloseTimerRef.current = window.setTimeout(() => {
-      setPreviewCardId(current => (!reportId || current === reportId ? null : current));
-      previewCloseTimerRef.current = null;
-    }, 180);
-  }, [previewCardId]);
+    if (previewExpiryTimerRef.current) clearTimeout(previewExpiryTimerRef.current);
+    previewExpiryTimerRef.current = window.setTimeout(() => {
+      setPreviewCardId(null);
+      previewExpiryTimerRef.current = null;
+    }, REPORT_PREVIEW_CACHE_TTL_MS);
+  }, []);
 
   const toggleTouchPreview = useCallback((reportId, event) => {
     event.stopPropagation();
@@ -2289,7 +2306,16 @@ function Dashboard({ user, onLogout }) {
     else showCardPreview(reportId, true);
   }, [hideCardPreview, previewCardId, previewCardVisible, showCardPreview]);
 
-  useEffect(() => () => clearPreviewTimers(), [clearPreviewTimers]);
+  useEffect(() => {
+    preloadPowerBiResources();
+    return () => clearPreviewTimers();
+  }, [clearPreviewTimers]);
+
+  useEffect(() => {
+    clearPreviewTimers();
+    setPreviewCardVisible(false);
+    setPreviewCardId(null);
+  }, [activeCategory, activeView, clearPreviewTimers, previewUserEmail, searchQuery, sortBy, statusFilter]);
 
   const buildUiState = useCallback((overrides = {}) => ({
     app: "datareports",
