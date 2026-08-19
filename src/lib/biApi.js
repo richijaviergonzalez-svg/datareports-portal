@@ -2,6 +2,7 @@ const REPORTS_ENDPOINT = "/.netlify/functions/bi-reports";
 const REQUESTS_ENDPOINT = "/.netlify/functions/bi-requests";
 const AUDIT_ENDPOINT = "/.netlify/functions/bi-audit";
 const INCIDENTS_ENDPOINT = "/.netlify/functions/bi-incidents";
+const SUBSCRIPTIONS_ENDPOINT = "/.netlify/functions/bi-subscriptions";
 
 async function buildAuthHeaders(getAccessToken, extra = {}) {
   const token = await getAccessToken();
@@ -44,6 +45,46 @@ export async function saveReportsCatalog({ getAccessToken, reports, user }) {
   });
 
   return readJson(response, "No se pudo sincronizar el catalogo");
+}
+
+export async function fetchReportsHistory({ getAccessToken }) {
+  const response = await fetch(`${REPORTS_ENDPOINT}?history=1`, {
+    method: "GET",
+    headers: await buildAuthHeaders(getAccessToken, { Accept: "application/json" }),
+  });
+  return readJson(response, "No se pudo consultar el historial del catálogo");
+}
+
+export async function rollbackReportsCatalog({ getAccessToken, snapshotId }) {
+  const response = await fetch(REPORTS_ENDPOINT, {
+    method: "POST",
+    headers: await buildAuthHeaders(getAccessToken, {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    }),
+    body: JSON.stringify({ action: "rollback", snapshotId }),
+  });
+  return readJson(response, "No se pudo restaurar la versión seleccionada");
+}
+
+export async function fetchReportSubscriptions({ getAccessToken }) {
+  const response = await fetch(SUBSCRIPTIONS_ENDPOINT, {
+    method: "GET",
+    headers: await buildAuthHeaders(getAccessToken, { Accept: "application/json" }),
+  });
+  return readJson(response, "No se pudieron consultar las suscripciones");
+}
+
+export async function saveReportSubscriptions({ getAccessToken, reportIds }) {
+  const response = await fetch(SUBSCRIPTIONS_ENDPOINT, {
+    method: "PUT",
+    headers: await buildAuthHeaders(getAccessToken, {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    }),
+    body: JSON.stringify({ reportIds }),
+  });
+  return readJson(response, "No se pudieron guardar las suscripciones");
 }
 
 export async function fetchBiRequests({ getAccessToken }) {

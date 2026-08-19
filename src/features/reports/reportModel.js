@@ -117,6 +117,7 @@ export const canUserViewReport = (report, user) => {
   const domain = getUserDomain(email);
 
   if (isAdmin(email)) return true;
+  if (report?.status === "draft") return false;
   if (mode === "all") return true;
   if (mode === "admins") return false;
   if (mode === "emails") return (report.allowedEmails || []).map(e => String(e).toLowerCase()).includes(email);

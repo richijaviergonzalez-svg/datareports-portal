@@ -56,8 +56,12 @@ import {
   fetchBiAuditEvents,
   fetchBiIncidents,
   fetchBiRequests,
+  fetchReportSubscriptions,
   fetchReportsCatalog,
+  fetchReportsHistory,
+  rollbackReportsCatalog,
   saveBiIncidents,
+  saveReportSubscriptions,
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
@@ -119,6 +123,7 @@ const statusConfig = {
 
 
 const StatusBadge = ({ status, dark }) => {
+  if (!status || status === "live") return null;
   const s = statusConfig[status] || statusConfig.live;
   return (
     <div style={{ padding: "4px 12px", borderRadius: 20, fontSize: 10, fontWeight: 500, background: dark ? s.darkBg : s.lightBg, color: dark ? s.darkText : s.lightText, whiteSpace: "nowrap" }}>{s.label}</div>
@@ -529,7 +534,7 @@ function LoginScreen({ onLogin }) {
 // ========================
 // ADMIN PANEL
 // ========================
-function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser }) {
+function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const [list, setList] = useState(normalizeReports(reports));
   const [editing, setEditing] = useState(null);
@@ -549,6 +554,10 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [previewEmail, setPreviewEmail] = useState("");
+  const [historyEntries, setHistoryEntries] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const editorScrollRef = useRef(null);
 
   useEffect(() => setList(normalizeReports(reports)), [reports]);
@@ -585,7 +594,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     return "";
   };
 
-  const makeReportFromForm = () => {
+  const makeReportFromForm = (statusOverride) => {
     const previousReport = list.find(r => r.id === editing);
     const version = form.version.trim();
     const releaseNotes = form.releaseNotes.trim();
@@ -614,7 +623,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
       name: form.name,
       category: form.category,
       icon: form.icon,
-      status: form.status,
+      status: statusOverride || form.status,
       description: form.description,
       owner: form.owner,
       audience: form.audience,
@@ -662,10 +671,10 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     }
   };
 
-  const handleAdd = async () => {
+  const handleAdd = async (statusOverride) => {
     const error = validateForm();
     if (error) return showError(error);
-    const newReport = makeReportFromForm();
+    const newReport = makeReportFromForm(statusOverride);
     const updated = [...list, newReport];
     const ok = await persistList(updated, `"${newReport.name}" agregado al catálogo`);
     if (ok) resetForm();
@@ -693,10 +702,10 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
   };
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (statusOverride) => {
     const error = validateForm();
     if (error) return showError(error);
-    const updatedReport = makeReportFromForm();
+    const updatedReport = makeReportFromForm(statusOverride);
     const updated = list.map(r => r.id === editing ? updatedReport : r);
     const ok = await persistList(updated, "Reporte actualizado");
     if (ok) handleEdit(updatedReport);
@@ -731,6 +740,38 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     }
   };
 
+  const openHistory = async () => {
+    setShowHistory(true);
+    if (!onLoadHistory) return;
+    setHistoryLoading(true);
+    try {
+      const result = await onLoadHistory();
+      setHistoryEntries(Array.isArray(result?.history) ? result.history : []);
+    } catch (error) {
+      showError(error.message || "No se pudo cargar el historial.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const restoreSnapshot = async (snapshot) => {
+    if (!onRollback || !snapshot?.id) return;
+    if (!window.confirm(`¿Restaurar el catálogo de ${new Date(snapshot.createdAt).toLocaleString("es-PY")}? El estado actual también quedará guardado en el historial.`)) return;
+    setSaving(true);
+    try {
+      const result = await onRollback(snapshot.id);
+      const restored = normalizeReports(result?.reports || []);
+      setList(restored);
+      setShowHistory(false);
+      resetForm();
+      showSuccess(`Catálogo restaurado: ${restored.length} reportes`);
+    } catch (error) {
+      showError(error.message || "No se pudo restaurar el catálogo.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, fontSize: 13, fontFamily: "'Outfit', system-ui", outline: "none" };
   const selectStyle = { ...inputStyle, cursor: "pointer", appearance: "none", WebkitAppearance: "none" };
   const mutedLabel = { fontSize: 10, color: theme.textMuted, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: .8, fontWeight: 500 };
@@ -739,10 +780,13 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     if (!query) return true;
     return [report.name, report.category, report.owner, report.version].some(value => String(value || "").toLowerCase().includes(query));
   });
+  const previewVisibleReports = previewEmail.trim()
+    ? list.filter((report) => canUserViewReport(report, { email: previewEmail.trim() }))
+    : [];
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 16 }}>
-      <div className="admin-shell" style={{ width: "min(1440px, 96vw)", height: "min(920px, 94vh)", background: theme.bgCard, borderRadius: 16, border: `1px solid ${theme.border}`, overflow: "hidden", display: "flex", flexDirection: "column", animation: "scaleIn .24s ease-out", position: "relative", boxShadow: `0 30px 90px ${dark ? "rgba(0,0,0,.6)" : "rgba(15,23,42,.22)"}` }}>
+    <div style={standalone ? { position: "relative", width: "100%" } : { position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 16 }}>
+      <div className="admin-shell" style={{ width: standalone ? "100%" : "min(1440px, 96vw)", height: standalone ? "calc(100vh - 138px)" : "min(920px, 94vh)", minHeight: standalone ? 620 : undefined, background: theme.bgCard, borderRadius: 16, border: `1px solid ${theme.border}`, overflow: "hidden", display: "flex", flexDirection: "column", animation: "scaleIn .24s ease-out", position: "relative", boxShadow: standalone ? "none" : `0 30px 90px ${dark ? "rgba(0,0,0,.6)" : "rgba(15,23,42,.22)"}` }}>
         <div style={{ padding: "16px 22px", borderBottom: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0, minHeight: 72 }}>
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>Gestor de Catálogo BI</h2>
@@ -752,11 +796,12 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
             <span style={{ fontSize: 11, fontWeight: 600, color: reportSyncStatus === "shared" ? T.teal : "#F59E0B", background: reportSyncStatus === "shared" ? (dark ? T.teal + "18" : T.tealBg) : (dark ? "#F59E0B18" : "#FFFBEB"), padding: "6px 12px", borderRadius: 999 }}>
               {reportSyncMessage}
             </span>
+            <button onClick={openHistory} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 12px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, cursor: saving ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }} title="Consultar versiones anteriores del catálogo">Historial</button>
             <button onClick={resetForm} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 13px", borderRadius: 10, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, cursor: saving ? "wait" : "pointer", fontSize: 12, fontWeight: 700 }}>
               <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               Nuevo reporte
             </button>
-            <button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, fontSize: 18 }}>×</button>
+            <button onClick={onClose} style={{ height: 36, padding: standalone ? "0 12px" : 0, width: standalone ? "auto" : 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, fontSize: standalone ? 11 : 18, fontWeight: 700 }}>{standalone ? "Volver al portal" : "×"}</button>
           </div>
         </div>
 
@@ -908,10 +953,13 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
 
             <div style={{ display: "flex", gap: 10, position: "sticky", bottom: -28, margin: "20px -28px -28px", padding: "16px 28px", background: dark ? "rgba(30,34,45,.96)" : "rgba(244,247,251,.96)", backdropFilter: "blur(12px)", borderTop: `1px solid ${theme.border}`, zIndex: 10 }}>
               <button onClick={testConnection} disabled={testing || saving} style={{ padding: "12px 18px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, fontSize: 13, fontWeight: 600, cursor: testing ? "wait" : "pointer" }}>{testing ? "Validando..." : "Probar conexión"}</button>
-              <button onClick={editing ? handleSaveEdit : handleAdd} disabled={saving} style={{ flex: 1, padding: "12px 20px", borderRadius: 14, border: "none", background: saving ? theme.border : T.teal, color: saving ? theme.textMuted : "white", fontSize: 14, fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
+              <button onClick={() => editing ? handleSaveEdit("draft") : handleAdd("draft")} disabled={saving} style={{ padding: "12px 18px", borderRadius: 14, border: `1px solid #F59E0B55`, background: dark ? "#F59E0B12" : "#FFFBEB", color: "#D97706", fontSize: 12, fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>Guardar borrador</button>
+              <button onClick={() => editing ? handleSaveEdit(form.status === "maintenance" ? "maintenance" : "live") : handleAdd(form.status === "maintenance" ? "maintenance" : "live")} disabled={saving} style={{ flex: 1, padding: "12px 20px", borderRadius: 14, border: "none", background: saving ? theme.border : T.teal, color: saving ? theme.textMuted : "white", fontSize: 14, fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 9 }}>
-                  {saving && <span style={{ width: 15, height: 15, border: `2px solid ${theme.textMuted}55`, borderTopColor: theme.textMuted, borderRadius: "50%", animation: "spin .65s linear infinite" }}/>}
-                  {saving ? "Publicando cambios..." : editing ? "Guardar cambios" : "Agregar reporte al catálogo"}
+                  {saving && (
+                    <span style={{ width: 15, height: 15, border: `2px solid ${theme.textMuted}55`, borderTopColor: theme.textMuted, borderRadius: "50%", animation: "spin .65s linear infinite" }}/>
+                  )}
+                  {saving ? "Publicando cambios..." : form.status === "maintenance" ? "Guardar en mantenimiento" : editing ? "Guardar y publicar" : "Agregar y publicar"}
                 </span>
               </button>
               {editing && <button onClick={resetForm} disabled={saving} style={{ padding: "12px 22px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textSecondary, fontSize: 13, cursor: "pointer" }}>Cancelar</button>}
@@ -932,6 +980,14 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
                 <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted, flexShrink: 0 }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.4" fill="none"/><path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
                 <input value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)} placeholder="Buscar reporte..." style={{ width: "100%", border: "none", outline: "none", background: "transparent", color: theme.text, fontSize: 12, fontFamily: "'Outfit', system-ui" }}/>
                 {catalogSearch && <button onClick={() => setCatalogSearch("")} style={{ border: "none", background: "transparent", color: theme.textMuted, cursor: "pointer", fontSize: 14 }}>×</button>}
+              </div>
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 11, background: dark ? T.teal + "08" : "#F8FAFF", border: `1px solid ${theme.border}` }}>
+                <label style={{ ...mutedLabel, marginBottom: 6 }}>Vista previa de permisos</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input type="email" value={previewEmail} onChange={e => setPreviewEmail(e.target.value)} placeholder="usuario@empresa.com" style={{ ...inputStyle, minWidth: 0, padding: "8px 9px", fontSize: 10 }}/>
+                  <button onClick={() => previewEmail.trim() && onPreviewUser?.(previewEmail.trim())} disabled={!previewEmail.trim()} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 9, padding: "0 9px", cursor: previewEmail.trim() ? "pointer" : "not-allowed", fontSize: 10, fontWeight: 700 }}>Ver como</button>
+                </div>
+                {previewEmail.trim() && <p style={{ marginTop: 7, fontSize: 10, color: theme.textMuted }}><strong style={{ color: theme.text }}>{previewVisibleReports.length}</strong> de {list.length} reportes visibles</p>}
               </div>
             </div>
 
@@ -979,6 +1035,27 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
             </div>
           </div>
         </div>
+        {showHistory && (
+          <div onClick={() => setShowHistory(false)} style={{ position: "absolute", inset: 0, zIndex: 60, background: "rgba(0,0,0,.42)", display: "flex", justifyContent: "flex-end" }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 420, maxWidth: "92%", height: "100%", background: theme.bgCard, borderLeft: `1px solid ${theme.border}`, padding: 20, overflowY: "auto", animation: "slideInRight .22s ease-out" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+                <div><h3 style={{ fontSize: 15, color: theme.text }}>Historial del catálogo</h3><p style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }}>Cada publicación conserva una copia recuperable.</p></div>
+                <button onClick={() => setShowHistory(false)} style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textMuted, cursor: "pointer" }}>×</button>
+              </div>
+              {historyLoading ? <p style={{ color: theme.textMuted, fontSize: 12 }}>Cargando historial...</p> : historyEntries.length === 0 ? <p style={{ color: theme.textMuted, fontSize: 12 }}>Todavía no hay snapshots disponibles.</p> : (
+                <div style={{ display: "grid", gap: 9 }}>
+                  {historyEntries.map((entry) => (
+                    <div key={entry.id} style={{ padding: 13, borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><strong style={{ fontSize: 12, color: theme.text }}>{entry.reportCount} reportes</strong><span style={{ fontSize: 9, color: theme.textMuted }}>{new Date(entry.createdAt).toLocaleString("es-PY")}</span></div>
+                      <p style={{ fontSize: 10, color: theme.textMuted, margin: "5px 0 10px" }}>{entry.reason} · {entry.createdBy || "Administrador"}</p>
+                      <button onClick={() => restoreSnapshot(entry)} disabled={saving} style={{ width: "100%", padding: "8px 10px", borderRadius: 9, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "10" : T.tealBg, color: T.teal, cursor: saving ? "wait" : "pointer", fontSize: 10, fontWeight: 700 }}>Restaurar esta versión</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1067,6 +1144,7 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
     { id: "recent", icon: <svg width="18" height="18" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 5v3l2 2" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round"/></svg>, label: "Recientes" },
     { id: "requests", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 6h6M5 8.5h4M5 11h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>, label: "Solicitudes BI", count: requests.filter(r => isUserAdmin || r.userEmail === user?.email).length },
     ...(isUserAdmin ? [
+      { id: "admin", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M6.5 1.5h3l.5 2 1.5.7 1.8-1 2.1 2.1-1 1.8.7 1.5 2 .5v3l-2 .5-.7 1.5 1 1.8-2.1 2.1-1.8-1-1.5.7-.5 2h-3l-.5-2-1.5-.7-1.8 1-2.1-2.1 1-1.8L1.5 9.5l-2-.5v-3l2-.5.7-1.5-1-1.8 2.1-2.1 1.8 1L6.5 1.5z" stroke="currentColor" strokeWidth="1.2" fill="none"/><circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>, label: "Administración" },
       { id: "biops", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 10l2-3 2 1.8 2-3.3" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "BI Ops", count: opsAlertCount },
       { id: "audit", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M8 1.8l5 1.8v3.6c0 3.1-2 5.8-5 7-3-1.2-5-3.9-5-7V3.6l5-1.8z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/><path d="M5.6 8l1.5 1.5 3.4-3.5" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Auditoria", count: auditEvents.length },
       { id: "metrics", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M2 14l4-5 3 2 5-7" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Métricas" },
@@ -1110,7 +1188,7 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
         </div>
 
         {/* Categories */}
-        {!collapsed && (
+        {!collapsed && activeView !== "admin" && (
           <div style={{ marginTop: 24 }}>
             <p style={{ fontSize: 10, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8, padding: "0 8px" }}>Categorías</p>
             {categories.filter(c => c !== "Todos").map(cat => {
@@ -1288,7 +1366,6 @@ function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], 
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDateKey, setSelectedDateKey] = useState(null);
   const maintenanceReports = reports.filter((report) => report.status === "maintenance");
-  const draftReports = reports.filter((report) => report.status === "draft");
   const openIssues = requests.filter((request) => request.type === "issue" && !["resolved", "rejected"].includes(request.status));
   const incidents = [
     maintenanceReports.length > 0 && {
@@ -1303,13 +1380,6 @@ function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], 
       title: "Incidencias reportadas",
       detail: `${openIssues.length} incidencia${openIssues.length === 1 ? "" : "s"} abiertas por usuarios.`,
       color: "#F59E0B",
-      dateKey: toDateKey(new Date()),
-    },
-    draftReports.length > 0 && {
-      id: "drafts",
-      title: "Reportes en preparacion",
-      detail: `${draftReports.length} reporte${draftReports.length === 1 ? "" : "s"} aun no estan publicados.`,
-      color: "#6366F1",
       dateKey: toDateKey(new Date()),
     },
   ].filter(Boolean);
@@ -1340,6 +1410,23 @@ function IncidentCalendarPanel({ dark, reports, requests, manualIncidents = [], 
     dateKey: toDateKey(new Date()),
   }];
   const selectedDateLabel = new Date(`${activeDateKey}T12:00:00`).toLocaleDateString("es-PY", { day: "2-digit", month: "short" });
+
+  if (incidentEvents.length === 0) {
+    return (
+      <div style={{ background: dark ? "#10B9810A" : "#F0FDF8", border: `1px solid ${dark ? "#10B98130" : "#BBF7D0"}`, borderRadius: 16, padding: "16px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, alignSelf: "start" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+          <span style={{ width: 30, height: 30, borderRadius: 9, background: "#10B98118", color: "#10B981", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <svg width="15" height="15" viewBox="0 0 16 16"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5.2 8.2l1.8 1.8 3.8-4" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ fontSize: 12, color: theme.text, fontWeight: 700 }}>Operación normal</h3>
+            <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 2 }}>No hay incidencias activas. El calendario aparecerá cuando exista un aviso.</p>
+          </div>
+        </div>
+        {isUserAdmin && <button onClick={onEditIncidents} style={{ border: `1px solid ${T.teal}44`, background: theme.bgCard, color: T.teal, borderRadius: 9, padding: "7px 10px", cursor: "pointer", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>Publicar aviso</button>}
+      </div>
+    );
+  }
 
   return (
     <div style={{ background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 18, height: "100%" }}>
@@ -1601,8 +1688,7 @@ function IncidentEditor({ dark, incidents, onSave, onClose }) {
 // HEALTH STATUS BADGE
 // ========================
 function HealthBadge({ report, dark }) {
-  const theme = dark ? darkTheme : lightTheme;
-  // Simulate freshness based on report status
+  if (!report || report.status === "live") return null;
   const statuses = { live: { label: "Conectado al Power Fabric", color: "#10B981", bg: dark ? "#10B98115" : "#D1FAE5" }, draft: { label: "Sin datos", color: "#F59E0B", bg: dark ? "#F59E0B15" : "#FEF3C7" }, maintenance: { label: "Sin conexión", color: "#EF4444", bg: dark ? "#EF444415" : "#FEE2E2" } };
   const s = statuses[report.status] || statuses.live;
   return (
@@ -2106,8 +2192,11 @@ function Dashboard({ user, onLogout }) {
   const [activeView, setActiveView] = useState("dashboard");
   const [recentViews, setRecentViews] = useState([]);
   const [cmdK, setCmdK] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
   const [showNotif, setShowNotif] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [previewUserEmail, setPreviewUserEmail] = useState("");
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
   const [incidents, setIncidents] = useState([]);
@@ -2198,17 +2287,19 @@ function Dashboard({ user, onLogout }) {
 
   const openAdminPanel = useCallback((options = {}) => {
     const { pushHistory = true } = options;
-    setShowAdmin(true);
+    setShowAdmin(false);
+    setActiveView("admin");
     if (pushHistory) {
-      pushUiState({ showAdmin: true, selectedReportId: null, detailReportId: null });
+      pushUiState({ activeView: "admin", showAdmin: false, selectedReportId: null, detailReportId: null });
     }
   }, [pushUiState]);
 
   const closeAdminPanel = useCallback((options = {}) => {
     const { pushHistory = true } = options;
     setShowAdmin(false);
+    setActiveView("dashboard");
     if (pushHistory) {
-      pushUiState({ showAdmin: false, selectedReportId: null, detailReportId: null });
+      pushUiState({ activeView: "dashboard", showAdmin: false, selectedReportId: null, detailReportId: null });
     }
   }, [pushUiState]);
 
@@ -2336,8 +2427,21 @@ function Dashboard({ user, onLogout }) {
         }
       }
 
+      const subscribedUpdates = sharedReports.filter((nextReport) => {
+        if (!subscriptions.includes(nextReport.id) || !nextReport.version) return false;
+        const previousReport = reports.find((report) => report.id === nextReport.id);
+        return previousReport && previousReport.version && previousReport.version !== nextReport.version;
+      });
+      const nextNotifications = subscribedUpdates.length
+        ? [
+            ...subscribedUpdates.map((report) => ({ id: Date.now() + Math.random(), type: "update", message: `${report.name} publicó la versión ${report.version}`, time: new Date().toISOString(), reportId: report.id, read: false })),
+            ...notifications,
+          ].slice(0, 20)
+        : notifications;
+
       setReports(sharedReports);
-      saveAll(sharedReports, favorites, recentViews, notifications, requests);
+      if (subscribedUpdates.length) setNotifications(nextNotifications);
+      saveAll(sharedReports, favorites, recentViews, nextNotifications, requests);
 
       setReportSyncStatus("shared");
       setReportSyncMessage(sharedReports.length ? "Catálogo sincronizado" : "Catálogo sincronizado: sin reportes");
@@ -2345,7 +2449,7 @@ function Dashboard({ user, onLogout }) {
       setReportSyncStatus("local");
       setReportSyncMessage("Catálogo local: pendiente conectar bi-reports");
     }
-  }, [reports, favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
+  }, [reports, favorites, recentViews, notifications, requests, subscriptions, saveAll, shouldSyncShared]);
 
   // Cargar catálogo central al iniciar sesión y mantenerlo actualizado para todos los usuarios.
   useEffect(() => {
@@ -2439,7 +2543,28 @@ function Dashboard({ user, onLogout }) {
     return { ...result, reports: finalReports };
   };
 
+  const loadReportsHistory = () => fetchReportsHistory({ getAccessToken });
+
+  const rollbackReports = async (snapshotId) => {
+    const result = await rollbackReportsCatalog({ getAccessToken, snapshotId });
+    const restored = normalizeReports(result.reports || []);
+    setReports(restored);
+    saveAll(restored, favorites, recentViews, notifications, requests);
+    setReportSyncStatus("shared");
+    setReportSyncMessage("Catálogo restaurado");
+    return { ...result, reports: restored };
+  };
+
   useEffect(() => { if (loaded) saveAll(reports, favorites, recentViews, notifications, requests); }, [favorites, requests, loaded]);
+
+  useEffect(() => {
+    if (!loaded || !user?.email) return;
+    let active = true;
+    fetchReportSubscriptions({ getAccessToken })
+      .then((result) => { if (active) setSubscriptions(Array.isArray(result.reportIds) ? result.reportIds : []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [loaded, user?.email]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -2461,7 +2586,8 @@ function Dashboard({ user, onLogout }) {
 
   // Track recent views
   const openReport = (report, options = {}) => {
-    if (!canUserViewReport(report, user)) {
+    const permissionUser = previewUserEmail && isAdmin(user.email) ? { email: previewUserEmail } : user;
+    if (!canUserViewReport(report, permissionUser)) {
       showToast("No tenés permiso para ver este reporte en DataReports", "error");
       return;
     }
@@ -2784,14 +2910,21 @@ function Dashboard({ user, onLogout }) {
     return `Hace ${days}d`;
   };
 
-  // Keyboard shortcut Ctrl+K
+  // Global navigation shortcuts
   useEffect(() => {
-    const handler = (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); setCmdK(true); } if (e.key === "Escape") setCmdK(false); };
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setCmdK(true); }
+      if (e.altKey && e.key === "1") { e.preventDefault(); navigateToView("dashboard"); }
+      if (e.altKey && e.key === "2") { e.preventDefault(); navigateToView("favorites"); }
+      if (e.altKey && e.key.toLowerCase() === "a" && isAdmin(user.email)) { e.preventDefault(); openAdminPanel(); }
+      if (e.key === "Escape") { setCmdK(false); setCommandQuery(""); }
+    };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [navigateToView, openAdminPanel, user.email]);
 
-  const userVisibleReports = reports.filter(r => canUserViewReport(r, user));
+  const effectiveCatalogUser = previewUserEmail && isAdmin(user.email) ? { ...user, email: previewUserEmail } : user;
+  const userVisibleReports = reports.filter(r => canUserViewReport(r, effectiveCatalogUser));
   const categories = ["Todos", ...new Set(userVisibleReports.map(r => r.category))];
   let filtered = userVisibleReports.filter(r => {
     const matchCat = activeCategory === "Todos" || r.category === activeCategory;
@@ -2820,6 +2953,16 @@ function Dashboard({ user, onLogout }) {
     query: searchQuery,
   });
   const requestStats = getRequestStats(visibleRequests);
+  const commandNeedle = commandQuery.trim().toLowerCase();
+  const commandItems = [
+    { key: "view-dashboard", type: "view", label: "Dashboard", detail: "Ir al catálogo", action: () => navigateToView("dashboard") },
+    { key: "view-favorites", type: "view", label: "Favoritos", detail: "Abrir reportes favoritos", action: () => navigateToView("favorites") },
+    { key: "view-requests", type: "view", label: "Solicitudes BI", detail: "Consultar solicitudes", action: () => navigateToView("requests") },
+    ...(isAdmin(user.email) ? [{ key: "view-admin", type: "view", label: "Administración", detail: "Gestionar catálogo y permisos", action: () => openAdminPanel() }] : []),
+    ...categories.filter((category) => category !== "Todos").map((category) => ({ key: `category-${category}`, type: "category", label: category, detail: "Filtrar por categoría", action: () => { setActiveCategory(category); navigateToView("dashboard"); } })),
+    ...userVisibleReports.map((report) => ({ key: `report-${report.id}`, type: "report", label: report.name, detail: `${report.category}${report.version ? ` · v${report.version}` : ""}`, action: () => openReport(report) })),
+    ...visibleRequests.slice(0, 20).map((request) => ({ key: `request-${request.id}`, type: "request", label: request.reportName || "Solicitud BI", detail: request.summary || request.type || "Solicitud", action: () => { setSelectedRequest(request); navigateToView("requests"); } })),
+  ].filter((item) => !commandNeedle || `${item.label} ${item.detail}`.toLowerCase().includes(commandNeedle)).slice(0, 14);
 
   const updateRequestWorkflow = async (requestId, updates, toastMessage) => {
     const previousRequest = requests.find(req => req.id === requestId);
@@ -3129,6 +3272,14 @@ function Dashboard({ user, onLogout }) {
         icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFavorite ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.2"/></svg>,
       },
       {
+        label: "Seguir",
+        title: subscriptions.includes(report.id) ? "Cancelar suscripción" : "Recibir avisos de cambios",
+        onClick: () => toggleSubscription(report.id),
+        color: subscriptions.includes(report.id) ? T.teal : theme.textSecondary,
+        active: subscriptions.includes(report.id),
+        icon: <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 1.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 8.5v-3a4 4 0 0 0-4-4z" stroke="currentColor" strokeWidth="1.3" fill={subscriptions.includes(report.id) ? "currentColor" : "none"} fillOpacity=".16"/><path d="M6 13a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>,
+      },
+      {
         label: "Problema",
         title: "Reportar un problema",
         onClick: () => openActionModal("issue", report),
@@ -3152,12 +3303,12 @@ function Dashboard({ user, onLogout }) {
     ];
 
     return (
-      <div aria-label="Acciones del reporte" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6, marginTop: 14 }}>
+      <div aria-label="Acciones del reporte" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 6, marginTop: 14 }}>
         {actions.map((action) => (
           <button key={action.label} type="button" title={action.title} onClick={action.onClick} style={{
             minWidth: 0, height: 34, padding: "0 8px", borderRadius: 8,
             border: `1px solid ${action.active ? action.color + "55" : theme.border}`,
-            background: action.active ? (dark ? "#F59E0B12" : "#FFFBEB") : theme.bgCard,
+            background: action.active ? action.color + (dark ? "14" : "0F") : theme.bgCard,
             color: action.color, cursor: "pointer", transition: "border-color .18s ease, background .18s ease, transform .18s ease",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
             fontSize: 10, fontWeight: 500, fontFamily: "'Outfit', system-ui",
@@ -3168,6 +3319,22 @@ function Dashboard({ user, onLogout }) {
         ))}
       </div>
     );
+  };
+
+  const toggleSubscription = async (reportId) => {
+    const previous = subscriptions;
+    const next = previous.includes(reportId)
+      ? previous.filter((id) => id !== reportId)
+      : [...previous, reportId];
+    setSubscriptions(next);
+    try {
+      const result = await saveReportSubscriptions({ getAccessToken, reportIds: next });
+      setSubscriptions(Array.isArray(result.reportIds) ? result.reportIds : next);
+      showToast(next.includes(reportId) ? "Suscripción activada" : "Suscripción desactivada");
+    } catch (error) {
+      setSubscriptions(previous);
+      showToast("No se pudo actualizar la suscripción", "error");
+    }
   };
 
   const renderViewerDetailPanel = () => detailReport && (
@@ -3364,7 +3531,6 @@ function Dashboard({ user, onLogout }) {
   return (
     <div style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
       <style>{globalStyles}</style>
-      {showAdmin && <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user}/>}
       {showIncidentEditor && <IncidentEditor dark={dark} incidents={incidents} onSave={saveSharedIncidents} onClose={() => setShowIncidentEditor(false)}/>}
       {showNotif && <div onClick={() => setShowNotif(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }}/>}
       {renderActionModal()}
@@ -3372,33 +3538,31 @@ function Dashboard({ user, onLogout }) {
 
       {/* Command Palette (Ctrl+K) */}
       {cmdK && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 120 }} onClick={() => setCmdK(false)}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 120 }} onClick={() => { setCmdK(false); setCommandQuery(""); }}>
           <div onClick={e => e.stopPropagation()} style={{ width: 520, background: theme.bgCard, borderRadius: 20, border: `1px solid ${theme.border}`, boxShadow: `0 24px 64px ${dark ? "rgba(0,0,0,.5)" : "rgba(0,0,0,.15)"}`, overflow: "hidden", animation: "scaleIn .2s ease-out" }}>
             <div style={{ padding: "16px 20px", borderBottom: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 10 }}>
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-              <input autoFocus type="text" placeholder="Buscar reportes, categorías..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              <input autoFocus type="text" placeholder="Buscar reportes, categorías, solicitudes o secciones..." value={commandQuery} onChange={e => setCommandQuery(e.target.value)}
                 style={{ border: "none", background: "transparent", outline: "none", fontSize: 15, color: theme.text, width: "100%", fontFamily: "'Outfit', system-ui" }}/>
               <span style={{ fontSize: 10, color: theme.textMuted, background: theme.bgSurface, padding: "3px 8px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>ESC</span>
             </div>
             <div style={{ maxHeight: 360, overflow: "auto", padding: 8 }}>
-              {userVisibleReports.filter(r => r.name.toLowerCase().includes(searchQuery.toLowerCase()) || r.category.toLowerCase().includes(searchQuery.toLowerCase())).map(report => {
-                const colors = categoryColors[report.category] || categoryColors.Comercial;
-                return (
-                  <button key={report.id} onClick={() => { openReport(report); setCmdK(false); setSearchQuery(""); }}
+              {commandItems.length === 0 ? <div style={{ padding: 28, textAlign: "center", color: theme.textMuted, fontSize: 12 }}>No encontramos resultados.</div> : commandItems.map(item => (
+                  <button key={item.key} onClick={() => { item.action(); setCmdK(false); setCommandQuery(""); }}
                     style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, border: "none", width: "100%", background: "transparent", cursor: "pointer", transition: "background .15s", textAlign: "left" }}
                     onMouseEnter={e => e.currentTarget.style.background = theme.bgSurface} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <div style={{ width: 32, height: 32, borderRadius: 8, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <svg width="14" height="14" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
+                    <div style={{ width: 32, height: 32, borderRadius: 8, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, textTransform: "uppercase" }}>
+                      {item.type === "report" ? "BI" : item.type === "request" ? "SOL" : item.type === "category" ? "CAT" : "IR"}
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{report.name}</div>
-                      <div style={{ fontSize: 11, color: theme.textMuted }}>{report.category}</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{item.label}</div>
+                      <div style={{ fontSize: 11, color: theme.textMuted }}>{item.detail}</div>
                     </div>
-                    <StatusBadge status={report.status} dark={dark}/>
+                    <span style={{ fontSize: 9, color: theme.textMuted, textTransform: "uppercase" }}>{item.type}</span>
                   </button>
-                );
-              })}
+              ))}
             </div>
+            <div style={{ padding: "9px 14px", borderTop: `1px solid ${theme.border}`, display: "flex", gap: 14, color: theme.textMuted, fontSize: 9 }}><span>Alt+1 Dashboard</span><span>Alt+2 Favoritos</span>{isAdmin(user.email) && <span>Alt+A Administración</span>}</div>
           </div>
         </div>
       )}
@@ -3421,22 +3585,22 @@ function Dashboard({ user, onLogout }) {
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
             <h2 style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>
-              {activeView === "dashboard" ? "Dashboard" : activeView === "favorites" ? "Favoritos" : activeView === "recent" ? "Recientes" : activeView === "requests" ? "Solicitudes BI" : activeView === "biops" ? "BI Ops" : activeView === "audit" ? "Auditoria" : "Métricas"}
+              {activeView === "dashboard" ? "Dashboard" : activeView === "favorites" ? "Favoritos" : activeView === "recent" ? "Recientes" : activeView === "requests" ? "Solicitudes BI" : activeView === "admin" ? "Administración" : activeView === "biops" ? "BI Ops" : activeView === "audit" ? "Auditoria" : "Métricas"}
             </h2>
             {activeCategory !== "Todos" && activeView === "dashboard" && (
               <span style={{ fontSize: 11, color: T.teal, background: dark ? T.teal + "15" : T.tealBg, padding: "3px 10px", borderRadius: 8, fontWeight: 500 }}>{activeCategory}</span>
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button className="topbar-search" onClick={() => setCmdK(true)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 12, background: theme.bgSurface, border: `1px solid ${theme.border}`, cursor: "pointer", transition: "all .2s" }}>
+            <button className="topbar-search" onClick={() => setCmdK(true)} aria-label="Abrir búsqueda global" title="Búsqueda global (Ctrl+K)" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 12, background: theme.bgSurface, border: `1px solid ${theme.border}`, cursor: "pointer", transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               <span style={{ fontSize: 12, color: theme.textMuted }}>Buscar...</span>
-              <span style={{ fontSize: 10, color: theme.textMuted, background: theme.bgCard, padding: "2px 6px", borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${theme.border}` }}>⌘K</span>
+              <span style={{ fontSize: 10, color: theme.textMuted, background: theme.bgCard, padding: "2px 6px", borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${theme.border}` }}>Ctrl K</span>
             </button>
 
             {/* Notification bell */}
             <div style={{ position: "relative" }}>
-              <button onClick={() => setShowNotif(!showNotif)} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", transition: "all .2s" }}>
+              <button onClick={() => setShowNotif(!showNotif)} aria-label="Abrir notificaciones" title="Notificaciones" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", transition: "all .2s" }}>
                 <svg width="15" height="15" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M8 1.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 8.5v-3a4 4 0 0 0-4-4z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M6 13a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>
                 {unreadCount > 0 && <div style={{ position: "absolute", top: 5, right: 5, width: 8, height: 8, borderRadius: 4, background: "#EF4444", border: `2px solid ${theme.bgCard}` }}/>}
               </button>
@@ -3471,7 +3635,7 @@ function Dashboard({ user, onLogout }) {
               )}
             </div>
 
-            <button onClick={() => setDark(!dark)} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
+            <button onClick={() => setDark(!dark)} aria-label={dark ? "Activar tema claro" : "Activar tema oscuro"} title={dark ? "Tema claro" : "Tema oscuro"} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
               {dark ? <svg width="15" height="15" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.5" stroke="#FBBF24" strokeWidth="1.5" fill="none"/></svg> : <svg width="15" height="15" viewBox="0 0 16 16"><path d="M14 9.3A6 6 0 0 1 6.7 2 6 6 0 1 0 14 9.3z" stroke="#6B7280" strokeWidth="1.5" fill="none"/></svg>}
             </button>
             {isAdmin(user.email) && (
@@ -3484,6 +3648,16 @@ function Dashboard({ user, onLogout }) {
         </div>
 
         <div style={{ padding: "24px 28px" }}>
+          {previewUserEmail && isAdmin(user.email) && activeView !== "admin" && (
+            <div style={{ marginBottom: 14, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "10" : T.tealBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div><strong style={{ color: theme.text, fontSize: 12 }}>Vista de permisos</strong><span style={{ color: theme.textMuted, fontSize: 11 }}> · Estás viendo el catálogo disponible para {previewUserEmail}</span></div>
+              <button onClick={() => setPreviewUserEmail("")} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgCard, color: T.teal, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Salir de la vista</button>
+            </div>
+          )}
+
+          {activeView === "admin" && isAdmin(user.email) && (
+            <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={(email) => { setPreviewUserEmail(email); navigateToView("dashboard"); }} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
+          )}
           {/* Welcome and incident calendar - only on dashboard view */}
           {activeView === "dashboard" && (
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "stretch" }} className="metrics-grid">
@@ -3756,52 +3930,44 @@ function Dashboard({ user, onLogout }) {
           {(activeView === "dashboard" || activeView === "favorites") && (
           <>
             {/* Catalog toolbar */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18, alignItems: "center", animation: "fadeUp .3s ease-out" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18, alignItems: "center", padding: 10, borderRadius: 14, background: theme.bgCard, border: `1px solid ${theme.border}`, animation: "fadeUp .3s ease-out" }}>
               {/* Inline search */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 12, background: theme.bgCard, border: `1px solid ${theme.border}`, flex: "1 1 200px", maxWidth: 320 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: theme.bgSurface, border: `1px solid ${theme.border}`, flex: "1 1 240px", minWidth: 220 }}>
                 <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textMuted, flexShrink: 0 }}><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/><line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                 <input type="text" placeholder="Buscar por nombre, descripción o categoría..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                   style={{ border: "none", background: "transparent", outline: "none", fontSize: 12, color: theme.text, width: "100%", fontFamily: "'Outfit', system-ui" }}/>
                 {searchQuery && <button onClick={() => setSearchQuery("")} style={{ border: "none", background: "none", cursor: "pointer", color: theme.textMuted, fontSize: 14, lineHeight: 1 }}>×</button>}
               </div>
 
-              {/* Category filter pills */}
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {categories.map(cat => {
-                  const isActive = activeCategory === cat;
-                  const colors = categoryColors[cat];
-                  return (
-                    <button key={cat} onClick={() => setActiveCategory(cat)} style={{
-                      padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${isActive ? (colors?.accent || T.teal) : "transparent"}`,
-                      background: isActive ? (dark ? (colors?.darkBg || T.teal + "15") : (colors?.bg || T.tealBg)) : theme.bgCard,
-                      color: isActive ? (dark ? (colors?.darkText || T.tealLight) : (colors?.accent || T.teal)) : theme.textMuted,
-                      fontSize: 11, fontWeight: 500, cursor: "pointer", transition: "all .2s", whiteSpace: "nowrap",
-                    }}>{cat}</button>
-                  );
-                })}
-              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
+                Categoría
+                <select value={activeCategory} onChange={e => setActiveCategory(e.target.value)} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                  {categories.map(cat => <option key={cat} value={cat}>{cat === "Todos" ? "Todas" : cat}</option>)}
+                </select>
+              </label>
 
-              {/* Status filter */}
-              <div style={{ display: "flex", gap: 4 }}>
-                {[{ key: "all", label: "Todos" }, { key: "live", label: "Activo" }, { key: "draft", label: "Borrador" }, { key: "maintenance", label: "Mantenimiento" }].map(s => (
-                  <button key={s.key} onClick={() => setStatusFilter(s.key)} style={{
-                    padding: "6px 12px", borderRadius: 20, border: "none", fontSize: 11, fontWeight: 500, cursor: "pointer", transition: "all .2s",
-                    background: statusFilter === s.key ? (dark ? T.teal + "18" : T.tealBg) : theme.bgCard,
-                    color: statusFilter === s.key ? T.teal : theme.textMuted,
-                  }}>{s.label}</button>
-                ))}
-              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
+                Estado
+                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                  <option value="all">Todos</option>
+                  <option value="live">Activos</option>
+                  {isAdmin(user.email) && <option value="draft">Borradores</option>}
+                  <option value="maintenance">Mantenimiento</option>
+                </select>
+              </label>
 
-              {/* Sort */}
-              <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{
-                padding: "7px 12px", borderRadius: 10, border: `1px solid ${theme.border}`,
-                background: theme.bgCard, color: theme.textSecondary, fontSize: 11, cursor: "pointer",
-                fontFamily: "'Outfit', system-ui", outline: "none", marginLeft: "auto",
-              }}>
-                <option value="name">Nombre A-Z</option>
-                <option value="category">Categoría</option>
-                <option value="status">Estado</option>
-              </select>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, color: theme.textMuted, fontSize: 10, whiteSpace: "nowrap" }}>
+                Orden
+                <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: "8px 28px 8px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, fontSize: 11, cursor: "pointer", fontFamily: "'Outfit', system-ui", outline: "none" }}>
+                  <option value="name">Nombre A-Z</option>
+                  <option value="category">Categoría</option>
+                  <option value="status">Estado</option>
+                </select>
+              </label>
+
+              {(searchQuery || activeCategory !== "Todos" || statusFilter !== "all" || sortBy !== "name") && (
+                <button onClick={() => { setSearchQuery(""); setActiveCategory("Todos"); setStatusFilter("all"); setSortBy("name"); }} style={{ height: 34, padding: "0 11px", borderRadius: 9, border: `1px solid ${theme.border}`, background: "transparent", color: T.teal, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Limpiar</button>
+              )}
             </div>
 
             {/* Results count */}
@@ -3901,7 +4067,7 @@ function Dashboard({ user, onLogout }) {
           </>
           )}
 
-          {displayReports.length === 0 && activeView !== "metrics" && activeView !== "requests" && (
+          {displayReports.length === 0 && !["metrics", "requests", "admin", "biops", "audit"].includes(activeView) && (
             <div style={{ textAlign: "center", padding: 60, animation: "fadeUp .4s ease-out" }}>
               <svg width="56" height="56" viewBox="0 0 48 48" style={{ color: theme.border, marginBottom: 16 }}><circle cx="20" cy="20" r="14" stroke="currentColor" strokeWidth="2" fill="none"/><line x1="30" y1="30" x2="40" y2="40" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               <p style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>
