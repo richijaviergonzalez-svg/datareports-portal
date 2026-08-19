@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Hourglass } from "ldrs/react";
-import "ldrs/react/Hourglass.css";
 import "./styles/motion.css";
 import {
   ALL_CATEGORIES,
@@ -402,11 +400,14 @@ function PowerBIEmbed({ report, dark }) {
               <p style={{ marginTop: "auto", fontSize: 11, color: dark ? "#6B7288" : "#98A2B3" }}>Preparando {report.name}...</p>
             </div>
           </div>
-          <div className="report-loading-focus" style={{ background: dark ? "rgba(24,27,35,.92)" : "rgba(255,255,255,.94)", borderColor: dark ? "#353B4A" : "#E3E8F0", boxShadow: dark ? "0 18px 50px rgba(0,0,0,.34)" : "0 18px 50px rgba(15,23,42,.12)" }}>
-            <Hourglass size={42} bgOpacity={0.12} speed={1.65} color={dark ? T.tealLight : T.teal}/>
-            <div>
+          <div className="report-loading-focus">
+            <div className="portal-hourglass" role="status" aria-label={`Abriendo ${report.name}`} style={{ "--uib-size": "45px", "--uib-color": dark ? T.tealLight : T.teal, "--uib-speed": "1.75s", "--uib-bg-opacity": 0.1 }}>
+              <div className="portal-hourglass-half"/>
+              <div className="portal-hourglass-half"/>
+            </div>
+            <div style={{ textAlign: "center" }}>
               <p style={{ fontSize: 12, fontWeight: 700, color: dark ? "#E8ECF4" : "#111827" }}>Abriendo reporte</p>
-              <p style={{ maxWidth: 220, marginTop: 2, fontSize: 10, color: dark ? "#8B93A7" : "#667085", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</p>
+              <p style={{ maxWidth: 260, marginTop: 3, fontSize: 10, color: dark ? "#8B93A7" : "#667085", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</p>
             </div>
           </div>
         </div>

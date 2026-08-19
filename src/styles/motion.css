@@ -320,17 +320,118 @@ button.motion-control:not(.sidebar-nav-item):not(:disabled):hover {
   left: 50%;
   top: 50%;
   z-index: 3;
-  min-width: 250px;
   max-width: calc(100% - 36px);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
-  border: 1px solid;
-  border-radius: 12px;
-  backdrop-filter: blur(10px);
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
   transform: translate(-50%, -50%);
-  animation: scaleIn var(--motion-normal) var(--motion-ease-premium) both;
+  animation: fadeIn var(--motion-normal) ease both;
+}
+
+.portal-hourglass {
+  --uib-size: 45px;
+  --uib-color: #2563eb;
+  --uib-speed: 1.75s;
+  --uib-bg-opacity: 0.1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: var(--uib-size);
+  width: var(--uib-size);
+  transform: rotate(45deg);
+  animation: portalHourglassRotate calc(var(--uib-speed) * 2) ease-in-out infinite;
+}
+
+.portal-hourglass-half {
+  --uib-half-size: calc(var(--uib-size) * 0.435);
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--uib-half-size);
+  height: var(--uib-half-size);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.portal-hourglass-half:first-child {
+  top: 8.25%;
+  left: 8.25%;
+  border-radius: 50% 50% calc(var(--uib-size) / 15);
+}
+
+.portal-hourglass-half:last-child {
+  right: 8.25%;
+  bottom: 8.25%;
+  align-self: flex-end;
+  border-radius: 50% 50% calc(var(--uib-size) / 15);
+  transform: rotate(180deg);
+}
+
+.portal-hourglass-half::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: var(--uib-color);
+  opacity: var(--uib-bg-opacity);
+  transition: background-color 0.3s ease;
+}
+
+.portal-hourglass-half::after {
+  content: "";
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0 0 calc(var(--uib-size) / 20) 0;
+  background-color: var(--uib-color);
+  transform: rotate(45deg) translate(-3%, 50%) scaleX(1.2);
+  transform-origin: bottom right;
+  animation: portalHourglassFlow calc(var(--uib-speed) * 2) linear infinite both;
+  transition: background-color 0.3s ease;
+}
+
+.portal-hourglass-half:last-child::after {
+  animation-delay: calc(var(--uib-speed) * -1);
+}
+
+@keyframes portalHourglassFlow {
+  0% {
+    transform: rotate(45deg) translate(-3%, 50%) scaleX(1.2);
+  }
+
+  30% {
+    transform: rotate(45deg) translate(115%, 50%) scaleX(1.2);
+  }
+
+  30.001%, 50% {
+    transform: rotate(0deg) translate(-85%, -85%) scaleX(1);
+  }
+
+  80%, 100% {
+    transform: rotate(0deg) translate(0%, 0%) scaleX(1);
+  }
+}
+
+@keyframes portalHourglassRotate {
+  0%, 30% {
+    transform: rotate(45deg);
+  }
+
+  50%, 80% {
+    transform: rotate(225deg);
+  }
+
+  100% {
+    transform: rotate(405deg);
+  }
 }
 
 .report-loading-line {
