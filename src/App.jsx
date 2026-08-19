@@ -820,7 +820,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
           </div>
         )}
 
-        <div className="admin-workspace" aria-busy={saving} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "340px minmax(0, 1fr)", overflow: "hidden", pointerEvents: saving ? "none" : "auto" }}>
+        <div className="admin-workspace" aria-busy={saving} style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "430px minmax(0, 1fr)", overflow: "hidden", pointerEvents: saving ? "none" : "auto" }}>
           <div ref={editorScrollRef} className="admin-editor" style={{ gridColumn: 2, gridRow: 1, overflowY: "auto", minHeight: 0, padding: 28, background: theme.bgSurface, position: "relative" }}>
             <div style={{ maxWidth: 920, margin: "0 auto" }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, color: theme.text, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
@@ -996,14 +996,14 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
               const colors = categoryColors[report.category] || categoryColors.Comercial;
               const active = editing === report.id;
               return (
-                <div key={report.id} onClick={() => handleEdit(report)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 10px", borderRadius: 11, background: active ? (dark ? T.teal + "12" : T.tealBg) : theme.bgCard, border: `1px solid ${active ? T.teal + "66" : theme.border}`, transition: "background .18s, border-color .18s, transform .18s", cursor: "pointer", position: "relative", transform: active ? "translateX(2px)" : "none" }}>
+                <div key={report.id} onClick={() => handleEdit(report)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 10px", borderRadius: 11, background: active ? (dark ? T.teal + "12" : T.tealBg) : theme.bgCard, border: `1px solid ${active ? T.teal + "66" : theme.border}`, transition: "background .18s, border-color .18s, transform .18s", cursor: "pointer", position: "relative", transform: active ? "translateX(2px)" : "none" }}>
                   <div style={{ width: 36, height: 36, borderRadius: 10, background: dark ? colors.darkBg : colors.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <svg width="16" height="16" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: theme.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.name}</div>
-                      {report.version && <span style={{ fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "2px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 6, minWidth: 0 }}>
+                      <div title={report.name} style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.3, fontWeight: 700, color: theme.text, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{report.name}</div>
+                      {report.version && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "2px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, minWidth: 0 }}>
                       <span style={{ fontSize: 9, color: dark ? colors.darkText : colors.accent, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.category}</span>
@@ -1090,7 +1090,7 @@ const globalStyles = `
 ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
 @media (max-width: 1024px) {
   .requests-layout { grid-template-columns: 1fr !important; }
-  .admin-workspace { grid-template-columns: 290px minmax(0, 1fr) !important; }
+  .admin-workspace { grid-template-columns: 350px minmax(0, 1fr) !important; }
 }
 @media (max-width: 768px) {
   .hide-mobile { display: none !important; }
