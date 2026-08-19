@@ -65,6 +65,19 @@ function normalizeEmailList(value) {
     .filter(Boolean);
 }
 
+function normalizeVersionHistory(value) {
+  return (Array.isArray(value) ? value : [])
+    .map((entry, index) => ({
+      id: String(entry?.id || `release-${index}`).trim(),
+      version: String(entry?.version || "").trim(),
+      notes: String(entry?.notes || entry?.releaseNotes || "").trim(),
+      releasedAt: String(entry?.releasedAt || entry?.publishedAt || "").trim(),
+      publishedBy: String(entry?.publishedBy || entry?.updatedBy || "").trim(),
+    }))
+    .filter((entry) => entry.version)
+    .slice(0, 20);
+}
+
 function normalizeReport(report = {}) {
   const now = new Date().toISOString();
 
@@ -87,6 +100,13 @@ function normalizeReport(report = {}) {
       report.refreshFrequency || "Según actualización del dataset"
     ).trim(),
     criticality: String(report.criticality || "media").trim(),
+
+    version: String(report.version || "").trim(),
+    releaseNotes: String(report.releaseNotes || "").trim(),
+    releasedAt: String(report.releasedAt || "").trim(),
+    versionHistory: normalizeVersionHistory(
+      report.versionHistory || report.changelog
+    ),
 
     internalNotes: String(
       report.internalNotes || report.technicalNotes || ""
@@ -181,6 +201,12 @@ function validateReport(report) {
   if (report.groupId && !uuidRegex.test(report.groupId)) {
     errors.push(
       "El Workspace ID debe tener formato UUID válido o quedar vacío si es My Workspace."
+    );
+  }
+
+  if (report.version && !/^[a-z0-9][a-z0-9._-]{0,19}$/i.test(report.version)) {
+    errors.push(
+      "La versión debe tener hasta 20 caracteres y usar letras, números, puntos, guiones o guion bajo."
     );
   }
 

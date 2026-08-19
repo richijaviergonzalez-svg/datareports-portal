@@ -10,6 +10,7 @@ import {
   isValidUuid,
   normalizeReport,
   normalizeReports,
+  normalizeVersionHistory,
   parseUrl,
 } from "./features/reports/reportModel.js";
 import {
@@ -121,6 +122,50 @@ const StatusBadge = ({ status, dark }) => {
   const s = statusConfig[status] || statusConfig.live;
   return (
     <div style={{ padding: "4px 12px", borderRadius: 20, fontSize: 10, fontWeight: 500, background: dark ? s.darkBg : s.lightBg, color: dark ? s.darkText : s.lightText, whiteSpace: "nowrap" }}>{s.label}</div>
+  );
+};
+
+const VersionBadge = ({ version, dark }) => version ? (
+  <span style={{ fontSize: 10, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "4px 9px", borderRadius: 7, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap" }}>v{version}</span>
+) : null;
+
+const formatReleaseDate = (value) => {
+  if (!value) return "";
+  const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("es-PY");
+};
+
+const ReportVersionPanel = ({ report, dark }) => {
+  if (!report?.version) return null;
+  const theme = dark ? darkTheme : lightTheme;
+  const history = normalizeVersionHistory(report.versionHistory).slice(1, 6);
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ padding: "15px 16px", borderRadius: 14, background: dark ? "#2563EB0F" : "#F5F8FF", border: `1px solid ${dark ? "#2563EB30" : "#D9E5FF"}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: report.releaseNotes ? 7 : 0 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: T.teal, textTransform: "uppercase", letterSpacing: .8 }}>Novedades de v{report.version}</p>
+          {report.releasedAt && <span style={{ fontSize: 10, color: theme.textMuted }}>{formatReleaseDate(report.releasedAt)}</span>}
+        </div>
+        {report.releaseNotes && <p style={{ fontSize: 12, color: theme.text, lineHeight: 1.65, whiteSpace: "pre-line" }}>{report.releaseNotes}</p>}
+      </div>
+      {history.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ fontSize: 11, fontWeight: 500, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 9 }}>Historial de versiones</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {history.map(entry => (
+              <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 10, padding: "10px 12px", borderRadius: 11, background: theme.bgSurface, border: `1px solid ${theme.border}` }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: T.teal, fontFamily: "'JetBrains Mono', monospace" }}>v{entry.version}</span>
+                <div>
+                  <p style={{ fontSize: 11, color: theme.text, lineHeight: 1.45 }}>{entry.notes || "Actualización del reporte"}</p>
+                  {entry.releasedAt && <p style={{ fontSize: 9, color: theme.textMuted, marginTop: 3 }}>{formatReleaseDate(entry.releasedAt)}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -494,6 +539,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live",
     owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service",
     refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "",
+    version: "", releaseNotes: "", releasedAt: "", versionHistory: [],
     visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "",
   });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -513,7 +559,7 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     setUrlInput("");
     setParsed(null);
     setTestResult(null);
-    setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "" });
+    setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", version: "", releaseNotes: "", releasedAt: "", versionHistory: [], visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "" });
   };
 
   const handleUrlPaste = (val) => {
@@ -528,37 +574,68 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
     if (!form.id || !isValidUuid(form.id)) return "El Report ID no tiene formato UUID válido.";
     if (form.groupId && !isValidUuid(form.groupId)) return "El Workspace ID debe ser UUID válido o quedar vacío si el reporte está en My Workspace.";
     if (!form.name.trim()) return "El nombre del reporte es obligatorio.";
+    if (form.version && !/^[a-z0-9][a-z0-9._-]{0,19}$/i.test(form.version.trim())) return "La versión debe usar letras, números, puntos o guiones (máximo 20 caracteres).";
+    if (form.releaseNotes.trim() && !form.version.trim()) return "Indicá una versión para publicar las notas de cambios.";
     if (list.some(r => r.id === form.id && r.id !== editing)) return "Ya existe un reporte configurado con ese Report ID.";
     if (form.visibilityMode === "emails" && !form.allowedEmails.trim()) return "Para visibilidad por usuarios específicos, cargá al menos un correo.";
     if (form.visibilityMode === "domains" && !form.allowedDomains.trim()) return "Para visibilidad por dominio, cargá al menos un dominio.";
     return "";
   };
 
-  const makeReportFromForm = () => normalizeReport({
-    id: form.id,
-    groupId: form.groupId,
-    name: form.name,
-    category: form.category,
-    icon: form.icon,
-    status: form.status,
-    description: form.description,
-    owner: form.owner,
-    audience: form.audience,
-    accessLevel: form.accessLevel,
-    dataSource: form.dataSource,
-    refreshFrequency: form.refreshFrequency,
-    criticality: form.criticality,
-    technicalNotes: form.technicalNotes,
-    originalUrl: form.originalUrl || urlInput,
-    visibilityMode: form.visibilityMode,
-    allowedEmails: form.allowedEmails,
-    allowedDomains: form.allowedDomains,
-    visibilityNote: form.visibilityNote,
-    sortOrder: form.sortOrder || list.length + 1,
-    createdAt: list.find(r => r.id === editing)?.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    updatedBy: currentUser?.email || "admin",
-  }, list.length);
+  const makeReportFromForm = () => {
+    const previousReport = list.find(r => r.id === editing);
+    const version = form.version.trim();
+    const releaseNotes = form.releaseNotes.trim();
+    const releasedAt = form.releasedAt || "";
+    const existingHistory = normalizeVersionHistory(previousReport?.versionHistory || form.versionHistory);
+    const versionChanged = Boolean(version) && (
+      !previousReport ||
+      version !== (previousReport.version || "") ||
+      releaseNotes !== (previousReport.releaseNotes || "") ||
+      releasedAt !== (previousReport.releasedAt || "")
+    );
+    const versionHistory = versionChanged
+      ? [{
+          id: `release-${Date.now()}`,
+          version,
+          notes: releaseNotes,
+          releasedAt: releasedAt || new Date().toISOString().slice(0, 10),
+          publishedBy: currentUser?.email || "admin",
+        }, ...existingHistory].slice(0, 20)
+      : existingHistory;
+    const currentReleasedAt = versionChanged ? versionHistory[0]?.releasedAt || releasedAt : releasedAt;
+
+    return normalizeReport({
+      id: form.id,
+      groupId: form.groupId,
+      name: form.name,
+      category: form.category,
+      icon: form.icon,
+      status: form.status,
+      description: form.description,
+      owner: form.owner,
+      audience: form.audience,
+      accessLevel: form.accessLevel,
+      dataSource: form.dataSource,
+      refreshFrequency: form.refreshFrequency,
+      criticality: form.criticality,
+      technicalNotes: form.technicalNotes,
+      originalUrl: form.originalUrl || urlInput,
+      version,
+      releaseNotes,
+      releasedAt: currentReleasedAt,
+      versionHistory,
+      visibilityMode: form.visibilityMode,
+      allowedEmails: form.allowedEmails,
+      allowedDomains: form.allowedDomains,
+      visibilityNote: form.visibilityNote,
+      sortOrder: form.sortOrder || list.length + 1,
+      createdAt: previousReport?.createdAt || new Date().toISOString(),
+      createdBy: previousReport?.createdBy || currentUser?.email || "admin",
+      updatedAt: new Date().toISOString(),
+      updatedBy: currentUser?.email || "admin",
+    }, list.length);
+  };
 
   const persistList = async (updated, msg) => {
     const optimisticList = normalizeReports(updated);
@@ -598,6 +675,10 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
       id: r.id, groupId: r.groupId || "", name: r.name, category: r.category, icon: r.icon, description: r.description || "", status: r.status,
       owner: r.owner || "Equipo BI", audience: r.audience || "Corporativo", accessLevel: r.accessLevel || "Corporativo", dataSource: r.dataSource || "Power BI Service",
       refreshFrequency: r.refreshFrequency || "Según dataset", criticality: r.criticality || "media", technicalNotes: r.technicalNotes || "", originalUrl: r.originalUrl || "", sortOrder: r.sortOrder || "",
+      version: r.version || "",
+      releaseNotes: r.releaseNotes || "",
+      releasedAt: r.releasedAt || "",
+      versionHistory: normalizeVersionHistory(r.versionHistory),
       visibilityMode: r.visibilityMode || "all",
       allowedEmails: (r.allowedEmails || []).join(", "),
       allowedDomains: (r.allowedDomains || []).join(", "),
@@ -707,6 +788,23 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
               <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Breve descripción del reporte..." style={{ ...inputStyle, minHeight: 68, resize: "vertical" }}/>
             </div>
 
+            <div style={{ marginBottom: 14, padding: 16, borderRadius: 16, background: dark ? "#2563EB0B" : "#F8FAFF", border: `1px solid ${dark ? "#2563EB2A" : "#DCE8FF"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ ...mutedLabel, color: T.teal }}>Versión y novedades</label>
+                  <p style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>Se muestra separada del título y cada publicación queda registrada en el historial.</p>
+                </div>
+                {form.version && <span style={{ fontSize: 11, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "5px 10px", borderRadius: 8, fontFamily: "'JetBrains Mono', monospace" }}>v{form.version}</span>}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <div><label style={mutedLabel}>Versión actual</label><input value={form.version} onChange={e => setForm({ ...form, version: e.target.value })} placeholder="Ej: 5.2" maxLength={20} style={{ ...inputStyle, fontFamily: "'JetBrains Mono', monospace" }}/></div>
+                <div><label style={mutedLabel}>Fecha de publicación</label><input type="date" value={form.releasedAt} onChange={e => setForm({ ...form, releasedAt: e.target.value })} style={inputStyle}/></div>
+              </div>
+              <label style={mutedLabel}>Mejoras de esta versión</label>
+              <textarea value={form.releaseNotes} onChange={e => setForm({ ...form, releaseNotes: e.target.value })} placeholder="Ej: Nuevo filtro por sucursal, mejora de rendimiento y ajuste del cálculo de margen." maxLength={600} style={{ ...inputStyle, minHeight: 76, resize: "vertical" }}/>
+              {form.versionHistory.length > 0 && <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 8 }}>{form.versionHistory.length} {form.versionHistory.length === 1 ? "versión anterior registrada" : "versiones anteriores registradas"}</p>}
+            </div>
+
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
               <div><label style={mutedLabel}>Responsable</label><input value={form.owner} onChange={e => setForm({ ...form, owner: e.target.value })} style={inputStyle}/></div>
               <div><label style={mutedLabel}>Audiencia</label><input value={form.audience} onChange={e => setForm({ ...form, audience: e.target.value })} placeholder="Retail, Dirección, Corporativo..." style={inputStyle}/></div>
@@ -801,7 +899,10 @@ function AdminPanel({ reports, onSave, onClose, dark, reportSyncStatus = "local"
                     <svg width="18" height="18" viewBox="0 0 22 22" style={{ color: dark ? colors.darkText : colors.accent }}>{iconPaths[report.icon]}</svg>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{report.name}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{report.name}</div>
+                      {report.version && <span style={{ fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "2px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
+                    </div>
                     <div style={{ fontSize: 10, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>ID: {report.id}</div>
                     <div style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{report.owner || "Equipo BI"} · {report.refreshFrequency || "Según dataset"} · Criticidad {report.criticality || "media"} · Visibilidad: {getVisibilityLabel(report)}</div>
                   </div>
@@ -2224,20 +2325,11 @@ function Dashboard({ user, onLogout }) {
         reports: cleanReports,
         user: { name: user?.name, email: user?.email },
       });
-      let syncedReports = normalizeReports(data.reports || cleanReports);
-
-      // Refetch de confirmación: evita delays visuales si Netlify Blobs demora unos ms.
-      try {
-        const confirmData = await fetchReportsCatalog({ getAccessToken });
-        if (Array.isArray(confirmData.reports)) {
-          syncedReports = normalizeReports(confirmData.reports);
-        }
-      } catch (confirmError) {
-        console.warn("Confirmación de catálogo no disponible:", confirmError);
-      }
+      const syncedReports = normalizeReports(data.reports || cleanReports);
 
       setReports(syncedReports);
       saveAll(syncedReports, favorites, recentViews, notifications, requests);
+      sharedSyncRef.current.reports = Date.now();
       setReportSyncStatus("shared");
       setReportSyncMessage("Catálogo sincronizado");
       return { ok: true, synced: true, reports: syncedReports };
@@ -2260,9 +2352,17 @@ function Dashboard({ user, onLogout }) {
     const cleanReports = normalizeReports(newReports);
     const existing = reports.map(r => r.id);
     const added = cleanReports.filter(r => !existing.includes(r.id));
+    const versionUpdates = cleanReports.filter(next => {
+      const previous = reports.find(report => report.id === next.id);
+      return previous && next.version && next.version !== previous.version;
+    });
     let updatedNotifs = notifications;
-    if (added.length > 0) {
-      updatedNotifs = [...added.map(r => ({ id: Date.now() + Math.random(), type: "new", message: `Nuevo reporte agregado: ${r.name}`, time: new Date().toISOString(), reportId: r.id, read: false })), ...notifications].slice(0, 20);
+    if (added.length > 0 || versionUpdates.length > 0) {
+      updatedNotifs = [
+        ...added.map(r => ({ id: Date.now() + Math.random(), type: "new", message: `Nuevo reporte agregado: ${r.name}`, time: new Date().toISOString(), reportId: r.id, read: false })),
+        ...versionUpdates.map(r => ({ id: Date.now() + Math.random(), type: "update", message: `${r.name} actualizado a v${r.version}`, time: new Date().toISOString(), reportId: r.id, read: false })),
+        ...notifications,
+      ].slice(0, 20);
       setNotifications(updatedNotifs);
     }
     const result = await pushSharedReports(cleanReports);
@@ -2981,6 +3081,7 @@ function Dashboard({ user, onLogout }) {
               <h2 style={{ fontSize: 20, fontWeight: 600, color: theme.text, marginBottom: 8 }}>{detailReport.name}</h2>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, fontWeight: 500, color: dark ? colors.darkText : colors.accent, background: dark ? colors.darkBg : colors.bg, padding: "4px 12px", borderRadius: 10 }}>{detailReport.category}</span>
+                <VersionBadge version={detailReport.version} dark={dark}/>
                 <StatusBadge status={detailReport.status} dark={dark}/>
                 <HealthBadge report={detailReport} dark={dark}/>
               </div>
@@ -2992,6 +3093,7 @@ function Dashboard({ user, onLogout }) {
                 <p style={{ fontSize: 11, fontWeight: 500, color: T.teal, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>¿Para qué sirve?</p>
                 <p style={{ fontSize: 13, color: theme.text, lineHeight: 1.65 }}>{getReportPurpose(detailReport)}</p>
               </div>
+              <ReportVersionPanel report={detailReport} dark={dark}/>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
                 {[{ label: "Responsable", value: detailReport.owner || "Equipo BI" }, { label: "Acceso", value: detailReport.accessLevel || detailReport.audience || "Corporativo" }, { label: "Fuente", value: detailReport.dataSource || "Power BI Service" }, { label: "Actualización", value: detailReport.refreshFrequency || "Según dataset" }].map((item, i) => (
                   <div key={i} style={{ background: theme.bgSurface, borderRadius: 12, padding: "12px 14px", border: `1px solid ${theme.border}` }}>
@@ -3087,6 +3189,7 @@ function Dashboard({ user, onLogout }) {
             <button onClick={() => openDetailPanel(selectedReport)} title="Ver detalles" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
               <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M8 7v4m0-6.5V5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
+            <VersionBadge version={selectedReport.version} dark={dark}/>
             <StatusBadge status={selectedReport.status} dark={dark}/>
           </div>
         </div>
@@ -3443,6 +3546,7 @@ function Dashboard({ user, onLogout }) {
                       <h2 style={{ fontSize: 20, fontWeight: 500, color: theme.text, marginBottom: 6 }}>{detailReport.name}</h2>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 11, fontWeight: 500, color: dark ? colors.darkText : colors.accent, background: dark ? colors.darkBg : colors.bg, padding: "4px 12px", borderRadius: 10 }}>{detailReport.category}</span>
+                        <VersionBadge version={detailReport.version} dark={dark}/>
                         <StatusBadge status={detailReport.status} dark={dark}/>
                         <HealthBadge report={detailReport} dark={dark}/>
                       </div>
@@ -3472,6 +3576,8 @@ function Dashboard({ user, onLogout }) {
                         <p style={{ fontSize: 11, fontWeight: 500, color: T.teal, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>¿Para qué sirve?</p>
                         <p style={{ fontSize: 13, color: theme.text, lineHeight: 1.65 }}>{getReportPurpose(detailReport)}</p>
                       </div>
+
+                      <ReportVersionPanel report={detailReport} dark={dark}/>
 
                       {/* Info cards grid */}
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
@@ -3664,6 +3770,7 @@ function Dashboard({ user, onLogout }) {
                         <button onClick={(e) => toggleFav(report.id, e)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, transition: "transform .2s", transform: isFav ? "scale(1.2)" : "scale(1)" }}>
                           <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 2l1.8 3.6L14 6.3l-3 2.9.7 4.1L8 11.3 4.3 13.3l.7-4.1-3-2.9 4.2-.7L8 2z" fill={isFav ? "#FBBF24" : "none"} stroke={isFav ? "#FBBF24" : theme.textMuted} strokeWidth="1.2"/></svg>
                         </button>
+                        {report.version && <span style={{ fontSize: 9, fontWeight: 700, color: T.teal, background: dark ? T.teal + "18" : T.tealBg, padding: "3px 7px", borderRadius: 6, fontFamily: "'JetBrains Mono', monospace" }}>v{report.version}</span>}
                         <StatusBadge status={report.status} dark={dark}/>
                       </div>
                     </div>

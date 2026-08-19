@@ -56,6 +56,17 @@ export function parseUrl(url) {
 
 export const isValidUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
 
+export const normalizeVersionHistory = (items = []) => (Array.isArray(items) ? items : [])
+  .map((entry, index) => ({
+    id: String(entry?.id || `release-${index}`).trim(),
+    version: String(entry?.version || "").trim(),
+    notes: String(entry?.notes || entry?.releaseNotes || "").trim(),
+    releasedAt: String(entry?.releasedAt || entry?.publishedAt || "").trim(),
+    publishedBy: String(entry?.publishedBy || entry?.updatedBy || "").trim(),
+  }))
+  .filter(entry => entry.version)
+  .slice(0, 20);
+
 export const normalizeReport = (report = {}, index = 0) => {
   const now = new Date().toISOString();
   return {
@@ -74,12 +85,18 @@ export const normalizeReport = (report = {}, index = 0) => {
     criticality: report.criticality || "media",
     technicalNotes: report.technicalNotes || "",
     originalUrl: report.originalUrl || "",
+    version: String(report.version || "").trim(),
+    releaseNotes: String(report.releaseNotes || "").trim(),
+    releasedAt: String(report.releasedAt || "").trim(),
+    versionHistory: normalizeVersionHistory(report.versionHistory || report.changelog),
     visibilityMode: report.visibilityMode || "all",
     allowedEmails: Array.isArray(report.allowedEmails) ? report.allowedEmails : String(report.allowedEmails || "").split(/[;,\n]/).map(v => v.trim().toLowerCase()).filter(Boolean),
     allowedDomains: Array.isArray(report.allowedDomains) ? report.allowedDomains : String(report.allowedDomains || "").split(/[;,\n]/).map(v => v.trim().toLowerCase().replace(/^@/, "")).filter(Boolean),
     visibilityNote: report.visibilityNote || "",
     createdAt: report.createdAt || now,
     updatedAt: report.updatedAt || now,
+    createdBy: String(report.createdBy || "").trim(),
+    updatedBy: String(report.updatedBy || "").trim(),
     sortOrder: Number.isFinite(Number(report.sortOrder)) ? Number(report.sortOrder) : index + 1,
   };
 };
