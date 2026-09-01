@@ -2273,6 +2273,7 @@ function Dashboard({ user, onLogout }) {
   const [previewUserEmail, setPreviewUserEmail] = useState("");
   const [previewCatalogReports, setPreviewCatalogReports] = useState(null);
   const [permissionPreviewResult, setPermissionPreviewResult] = useState(null);
+  const [catalogDiagnostics, setCatalogDiagnostics] = useState(null);
   const [catalogIdentityEmails, setCatalogIdentityEmails] = useState(() => [String(user?.email || "").trim().toLowerCase()].filter(Boolean));
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
@@ -2577,6 +2578,12 @@ function Dashboard({ user, onLogout }) {
     try {
       const data = await fetchReportsCatalog({ getAccessToken });
       if (!Array.isArray(data.reports)) throw new Error("invalid-shared-reports-response");
+      setCatalogDiagnostics({
+        runtime: data.runtime || "sin-runtime",
+        catalogRevision: data.catalogRevision || "sin-revision",
+        visibleReports: data.visibleReports,
+        totalReports: data.totalReports,
+      });
       const verifiedEmails = (Array.isArray(data.userEmails) ? data.userEmails : [data.userEmail])
         .map(value => String(value || "").trim().toLowerCase())
         .filter(Boolean);
@@ -3110,6 +3117,10 @@ function Dashboard({ user, onLogout }) {
     ? previewCatalogReports
     : reports;
   const userVisibleReports = catalogForCurrentView.filter(r => canUserViewReport(r, effectiveCatalogUser));
+  const showPreviewDiagnostics = window.location.hostname.startsWith("deploy-preview-22--");
+  const activeCatalogDiagnostics = previewUserEmail && permissionPreviewResult
+    ? permissionPreviewResult
+    : catalogDiagnostics;
   const categories = ["Todos", ...new Set(userVisibleReports.map(r => r.category))];
   let filtered = userVisibleReports.filter(r => {
     const matchCat = activeCategory === "Todos" || r.category === activeCategory;
@@ -3833,6 +3844,13 @@ function Dashboard({ user, onLogout }) {
         </div>
 
         <div key={activeView} className="motion-page" style={{ padding: "24px 28px" }}>
+          {showPreviewDiagnostics && activeCatalogDiagnostics && (
+            <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 10, border: `1px dashed ${theme.border}`, background: theme.bgSurface, color: theme.textMuted, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
+              <span>runtime: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.runtime}</strong></span>
+              <span>revision: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.catalogRevision}</strong></span>
+              <span>API visibles: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.visibleReports ?? "?"}/{activeCatalogDiagnostics.totalReports ?? "?"}</strong></span>
+            </div>
+          )}
           {previewUserEmail && isAdmin(user.email) && activeView !== "admin" && (
             <div style={{ marginBottom: 14, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "10" : T.tealBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div><strong style={{ color: theme.text, fontSize: 12 }}>Vista de permisos</strong><span style={{ color: theme.textMuted, fontSize: 11 }}> · Estás viendo el catálogo disponible para {previewUserEmail}</span></div>
