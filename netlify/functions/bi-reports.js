@@ -8,6 +8,14 @@ const AUDIT_KEY = "reports-audit.json";
 const HISTORY_KEY = "reports-history.json";
 const HISTORY_LIMIT = 20;
 
+function normalizeEmail(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
   "Cache-Control": "no-store",
@@ -42,26 +50,26 @@ function normalizeVisibilityMode(mode) {
 function normalizeList(value) {
   if (Array.isArray(value)) {
     return value
-      .map((item) => String(item || "").trim().toLowerCase())
+      .map(normalizeEmail)
       .filter(Boolean);
   }
 
   return String(value || "")
     .split(/[;,\n]/)
-    .map((item) => item.trim().toLowerCase().replace(/^@/, ""))
+    .map((item) => normalizeEmail(item).replace(/^@/, ""))
     .filter(Boolean);
 }
 
 function normalizeEmailList(value) {
   if (Array.isArray(value)) {
     return value
-      .map((item) => String(item || "").trim().toLowerCase())
+      .map(normalizeEmail)
       .filter(Boolean);
   }
 
   return String(value || "")
     .split(/[;,\n]/)
-    .map((item) => item.trim().toLowerCase())
+    .map(normalizeEmail)
     .filter(Boolean);
 }
 
@@ -158,7 +166,7 @@ function normalizeCatalog(reports = []) {
 
 function normalizeIdentityEmails(userEmail, userEmails = []) {
   return [...new Set([userEmail, ...(Array.isArray(userEmails) ? userEmails : [])]
-    .map((value) => String(value || "").trim().toLowerCase())
+    .map(normalizeEmail)
     .filter((value) => value.includes("@")))];
 }
 
@@ -330,7 +338,7 @@ function createHandler(dependencies = {}) {
       const reports = await readJSON(store, REPORTS_KEY, []);
       const normalized = normalizeCatalog(reports);
       const catalogDuplicatesRemoved = Math.max(0, (Array.isArray(reports) ? reports.length : 0) - normalized.length);
-      const previewEmail = String(params.previewEmail || "").trim().toLowerCase();
+      const previewEmail = normalizeEmail(params.previewEmail);
 
       if (previewEmail && !isAdmin) {
         return json(403, { ok: false, error: "No autorizado. Solo administradores pueden simular permisos." });
@@ -344,6 +352,10 @@ function createHandler(dependencies = {}) {
         report,
         decision: getReportAccessDecision(report, evaluatedEmail, evaluatedAsAdmin, evaluatedEmails),
       }));
+      const authorizationSummary = accessDecisions.reduce((summary, { decision }) => {
+        summary[decision.reason] = (summary[decision.reason] || 0) + 1;
+        return summary;
+      }, {});
 
       const visibleReports = accessDecisions
         .filter(({ decision }) => decision.visible)
@@ -371,6 +383,7 @@ function createHandler(dependencies = {}) {
         userEmail,
         userEmails: normalizeIdentityEmails(userEmail, auth.userEmails),
         evaluatedEmails: normalizedEvaluatedEmails,
+        authorizationSummary,
         isAdmin,
         previewEmail: previewEmail || null,
         totalReports: normalized.length,

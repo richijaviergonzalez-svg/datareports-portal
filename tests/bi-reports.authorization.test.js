@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHandler } = require("../netlify/functions/bi-reports");
-const { getClaimEmails } = require("../netlify/functions/_auth");
+const { getClaimEmails, normalizeEmail } = require("../netlify/functions/_auth");
 
 const UUIDS = {
   public: "11111111-1111-4111-8111-111111111111",
@@ -138,6 +138,13 @@ test("normaliza los correos alternativos presentes en el token de Microsoft", ()
   ]);
 });
 
+test("elimina caracteres invisibles de una identidad firmada", () => {
+  assert.equal(
+    normalizeEmail(" Lorena.Caballero\u200B@PilarPy.onmicrosoft.com "),
+    "lorena.caballero@pilarpy.onmicrosoft.com"
+  );
+});
+
 test("la vista de permisos del admin se calcula en el backend", async () => {
   const store = createStore([
     report(UUIDS.public),
@@ -161,6 +168,7 @@ test("la vista de permisos del admin se calcula en el backend", async () => {
   assert.equal(body.runtime, "modern-strong");
   assert.equal(body.previewEmail, "lorena.caballero@pilarpy.onmicrosoft.com");
   assert.deepEqual(body.evaluatedEmails, ["lorena.caballero@pilarpy.onmicrosoft.com"]);
+  assert.deepEqual(body.authorizationSummary, { "all-users": 1, "email-match": 1, "email-mismatch": 1 });
   assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
   assert.deepEqual(body.permissionDiagnostics.map((item) => ({ id: item.id, visible: item.visible, reason: item.reason })), [
     { id: UUIDS.public, visible: true, reason: "all-users" },

@@ -2647,6 +2647,7 @@ function Dashboard({ user, onLogout }) {
         totalReports: data.totalReports,
         catalogDuplicatesRemoved: data.catalogDuplicatesRemoved || 0,
         evaluatedEmails: Array.isArray(data.evaluatedEmails) ? data.evaluatedEmails : [],
+        authorizationSummary: data.authorizationSummary || {},
       });
       const verifiedEmails = (Array.isArray(data.userEmails) ? data.userEmails : [data.userEmail])
         .map(value => String(value || "").trim().toLowerCase())
@@ -3912,6 +3913,7 @@ function Dashboard({ user, onLogout }) {
               <span>revision: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.catalogRevision}</strong></span>
               <span>API visibles: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.visibleReports ?? "?"}/{activeCatalogDiagnostics.totalReports ?? "?"}</strong></span>
               <span>identidad: <strong style={{ color: theme.text }}>{(activeCatalogDiagnostics.evaluatedEmails || []).join(" | ") || "sin correo"}</strong></span>
+              <span>decisiones: <strong style={{ color: theme.text }}>{Object.entries(activeCatalogDiagnostics.authorizationSummary || {}).map(([reason, count]) => `${reason}:${count}`).join(" | ") || "sin datos"}</strong></span>
               {activeCatalogDiagnostics.catalogDuplicatesRemoved > 0 && <span style={{ color: "#D97706" }}>duplicados saneados: <strong>{activeCatalogDiagnostics.catalogDuplicatesRemoved}</strong></span>}
             </div>
           )}

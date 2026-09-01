@@ -106,6 +106,14 @@ function verifySignature(jwt, jwk) {
   return verifier.verify(publicKey, base64UrlToBuffer(jwt.signature));
 }
 
+function normalizeEmail(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 function getClaimEmails(payload = {}) {
   return [
     payload.preferred_username,
@@ -113,7 +121,7 @@ function getClaimEmails(payload = {}) {
     payload.email,
     payload.unique_name,
   ]
-    .map((value) => String(value || "").trim().toLowerCase())
+    .map(normalizeEmail)
     .filter((value, index, values) => value.includes("@") && values.indexOf(value) === index);
 }
 
@@ -202,4 +210,5 @@ module.exports = {
   getAdminEmails,
   getClaimEmails,
   getHeader,
+  normalizeEmail,
 };
