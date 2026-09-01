@@ -58,6 +58,8 @@ test("un usuario autenticado recibe solo reportes publicados y autorizados", asy
   assert.equal(response.statusCode, 200);
   assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
   assert.equal(store.lastReadOptions.type, "json");
+  assert.equal(body.runtime, "lambda-edge");
+  assert.match(body.catalogRevision, /^[a-f0-9]{16}$/);
 });
 
 test("un usuario no administrador no puede modificar el catálogo llamando la función", async () => {
@@ -121,6 +123,7 @@ test("la vista de permisos del admin se calcula en el backend", async () => {
     report(UUIDS.private, { visibilityMode: "emails", allowedEmails: ["otra@pilarpy.onmicrosoft.com"] }),
   ]);
   const handler = createHandler({
+    runtime: "modern-strong",
     authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", isAdmin: true }),
     getReportsStore: () => store,
   });
@@ -133,6 +136,7 @@ test("la vista de permisos del admin se calcula en el backend", async () => {
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
+  assert.equal(body.runtime, "modern-strong");
   assert.equal(body.previewEmail, "lorena.caballero@pilarpy.onmicrosoft.com");
   assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
   assert.deepEqual(body.permissionDiagnostics.map((item) => ({ id: item.id, visible: item.visible, reason: item.reason })), [

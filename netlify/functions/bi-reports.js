@@ -1,4 +1,5 @@
 const { connectLambda, getStore } = require("@netlify/blobs");
+const { createHash } = require("node:crypto");
 const { authenticate } = require("./_auth");
 
 const STORE_NAME = "datareports-bi";
@@ -136,6 +137,22 @@ function normalizeIdentityEmails(userEmail, userEmails = []) {
     .filter((value) => value.includes("@")))];
 }
 
+function getCatalogRevision(reports) {
+  const permissionState = reports.map((report) => ({
+    id: report.id,
+    status: report.status,
+    visibilityMode: report.visibilityMode,
+    allowedEmails: report.allowedEmails,
+    allowedDomains: report.allowedDomains,
+    updatedAt: report.updatedAt,
+  }));
+
+  return createHash("sha256")
+    .update(JSON.stringify(permissionState))
+    .digest("hex")
+    .slice(0, 16);
+}
+
 function getReportAccessDecision(report, userEmail, isAdmin, userEmails = []) {
   const normalizedReport = normalizeReport(report);
   if (isAdmin) return { visible: true, reason: "admin" };
@@ -256,6 +273,7 @@ function validateReport(report) {
 function createHandler(dependencies = {}) {
   const authenticateRequest = dependencies.authenticate || authenticate;
   const getStoreForRequest = dependencies.getReportsStore || getReportsStore;
+  const runtime = dependencies.runtime || "lambda-edge";
 
   return async (event) => {
   try {
@@ -332,6 +350,8 @@ function createHandler(dependencies = {}) {
       return json(200, {
         ok: true,
         source: "netlify-blobs",
+        runtime,
+        catalogRevision: getCatalogRevision(normalized),
         userEmail,
         userEmails: normalizeIdentityEmails(userEmail, auth.userEmails),
         isAdmin,
@@ -553,4 +573,4 @@ function createHandler(dependencies = {}) {
 
 exports.createHandler = createHandler;
 exports.handler = createHandler();
-exports.__test = { canUserSeeReport, getReportAccessDecision, normalizeReport, validateReport };
+exports.__test = { canUserSeeReport, getCatalogRevision, getReportAccessDecision, normalizeReport, validateReport };

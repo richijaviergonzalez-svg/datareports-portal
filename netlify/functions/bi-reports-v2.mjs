@@ -4,6 +4,7 @@ import reportsModule from "./bi-reports.js";
 const STORE_NAME = "datareports-bi";
 
 const handler = reportsModule.createHandler({
+  runtime: "modern-strong",
   getReportsStore: () => getStore({
     name: STORE_NAME,
     consistency: "strong",
