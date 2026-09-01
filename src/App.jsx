@@ -4,7 +4,6 @@ import "ldrs/react/Hourglass.css";
 import "./styles/motion.css";
 import {
   ALL_CATEGORIES,
-  DEFAULT_REPORTS,
   ICON_OPTIONS,
   canUserViewReport,
   getReportDescription,
@@ -68,7 +67,7 @@ import {
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
-import { loadPortalState, savePortalState } from "./lib/storage.js";
+import { loadCatalogRecovery, loadPortalState, saveCatalogRecovery, savePortalState } from "./lib/storage.js";
 import {
   getReportTransitionName,
   handlePremiumPointerMove,
@@ -581,7 +580,7 @@ function LoginScreen({ onLogin }) {
 // ========================
 // ADMIN PANEL
 // ========================
-function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, permissionPreviewResult, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
+function AdminPanel({ reports, recoveryReports = [], onRecoverLocal, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, permissionPreviewResult, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const [list, setList] = useState(normalizeReports(reports));
   const [editing, setEditing] = useState(null);
@@ -607,6 +606,11 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
   const [historyLoading, setHistoryLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const editorScrollRef = useRef(null);
+
+  useEffect(() => {
+    if (editing || saving) return;
+    setList(normalizeReports(reports));
+  }, [reports, editing, saving]);
 
   useEffect(() => setList(normalizeReports(reports)), [reports]);
 
@@ -832,6 +836,36 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
     }
   };
 
+  const catalogSignature = (items) => JSON.stringify(normalizeReports(items).map((report) => ({
+    id: report.id,
+    groupId: report.groupId,
+    name: report.name,
+    version: report.version,
+    status: report.status,
+    visibilityMode: report.visibilityMode,
+    allowedEmails: report.allowedEmails,
+    allowedDomains: report.allowedDomains,
+  })));
+  const recoveryDiffers = recoveryReports.length > 0 && catalogSignature(recoveryReports) !== catalogSignature(reports);
+
+  const recoverLocalCatalog = async () => {
+    if (!onRecoverLocal || saving) return;
+    if (!window.confirm(`La copia local contiene ${recoveryReports.length} reportes y reemplazará el catálogo central actual de ${reports.length}. ¿Continuar?`)) return;
+    setSaving(true);
+    try {
+      const result = await onRecoverLocal();
+      if (result?.ok === false) throw new Error(result.error || "No se pudo recuperar la copia local.");
+      const recovered = normalizeReports(result?.reports || recoveryReports);
+      setList(recovered);
+      resetForm();
+      showSuccess(`Copia local publicada: ${recovered.length} reportes`);
+    } catch (error) {
+      showError(error.message || "No se pudo recuperar la copia local.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, fontSize: 13, fontFamily: "'Outfit', system-ui", outline: "none" };
   const selectStyle = { ...inputStyle, cursor: "pointer", appearance: "none", WebkitAppearance: "none" };
   const mutedLabel = { fontSize: 10, color: theme.textMuted, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: .8, fontWeight: 500 };
@@ -860,6 +894,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
               {reportSyncMessage}
             </span>
             <button onClick={openHistory} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 12px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, cursor: saving ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }} title="Consultar versiones anteriores del catálogo">Historial</button>
+            {recoveryDiffers && <button onClick={recoverLocalCatalog} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 12px", borderRadius: 10, border: `1px solid ${dark ? "#F59E0B55" : "#FDE68A"}`, background: dark ? "#F59E0B14" : "#FFFBEB", color: dark ? "#FCD34D" : "#92400E", cursor: saving ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }} title="Publicar la copia local conservada antes de sincronizar">Recuperar copia local ({recoveryReports.length})</button>}
             <button onClick={resetForm} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 13px", borderRadius: 10, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, cursor: saving ? "wait" : "pointer", fontSize: 12, fontWeight: 700 }}>
               <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               Nuevo reporte
@@ -2272,7 +2307,7 @@ function MetricsPanel({ dark, reports, recentViews, favorites }) {
 // ========================
 function Dashboard({ user, onLogout }) {
   const [dark, setDark] = useState(false);
-  const [reports, setReports] = useState(DEFAULT_REPORTS);
+  const [reports, setReports] = useState([]);
   const [activeCategory, setActiveCategory] = useState("Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedReport, setSelectedReport] = useState(null);
@@ -2299,6 +2334,8 @@ function Dashboard({ user, onLogout }) {
   const [previewCatalogReports, setPreviewCatalogReports] = useState(null);
   const [permissionPreviewResult, setPermissionPreviewResult] = useState(null);
   const [catalogDiagnostics, setCatalogDiagnostics] = useState(null);
+  const [catalogReady, setCatalogReady] = useState(false);
+  const [localCatalogRecovery, setLocalCatalogRecovery] = useState([]);
   const [catalogIdentityEmails, setCatalogIdentityEmails] = useState(() => [String(user?.email || "").trim().toLowerCase()].filter(Boolean));
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
@@ -2526,7 +2563,7 @@ function Dashboard({ user, onLogout }) {
 
   useEffect(() => {
     const savedState = loadPortalState();
-    if (savedState.reports?.length) setReports(normalizeReports(savedState.reports));
+    if (isAdmin(user?.email)) setLocalCatalogRecovery(normalizeReports(loadCatalogRecovery()));
     if (savedState.favorites) setFavorites(savedState.favorites);
     if (savedState.recentViews) setRecentViews(savedState.recentViews);
     if (savedState.notifications) setNotifications(savedState.notifications);
@@ -2608,29 +2645,15 @@ function Dashboard({ user, onLogout }) {
         catalogRevision: data.catalogRevision || "sin-revision",
         visibleReports: data.visibleReports,
         totalReports: data.totalReports,
+        catalogDuplicatesRemoved: data.catalogDuplicatesRemoved || 0,
       });
       const verifiedEmails = (Array.isArray(data.userEmails) ? data.userEmails : [data.userEmail])
         .map(value => String(value || "").trim().toLowerCase())
         .filter(Boolean);
       if (verifiedEmails.length) setCatalogIdentityEmails(verifiedEmails);
 
-      // Netlify Blobs es la fuente oficial. Si el admin eliminó reportes, también debe verse vacío.
+      // Netlify Blobs es la única fuente autorizada para mostrar el catálogo.
       const sharedReports = normalizeReports(data.reports);
-      if (sharedReports.length === 0) {
-        const recoveryReports = normalizeReports([
-          ...reports,
-          ...recentViews,
-          ...DEFAULT_REPORTS,
-        ]);
-
-        if (recoveryReports.length > 0) {
-          setReports(recoveryReports);
-          saveAll(recoveryReports, favorites, recentViews, notifications, requests);
-          setReportSyncStatus("local");
-          setReportSyncMessage("Catálogo compartido vacío; usando respaldo local");
-          return;
-        }
-      }
 
       const subscribedUpdates = sharedReports.filter((nextReport) => {
         if (!subscriptions.includes(nextReport.id) || !nextReport.version) return false;
@@ -2650,9 +2673,12 @@ function Dashboard({ user, onLogout }) {
 
       setReportSyncStatus("shared");
       setReportSyncMessage(sharedReports.length ? "Catálogo sincronizado" : "Catálogo sincronizado: sin reportes");
+      setCatalogReady(true);
     } catch (e) {
+      sharedSyncRef.current.reports = 0;
       setReportSyncStatus("local");
-      setReportSyncMessage("Catálogo local: pendiente conectar bi-reports");
+      setReportSyncMessage("Catálogo no disponible");
+      setCatalogReady(true);
     }
   }, [reports, favorites, recentViews, notifications, requests, subscriptions, saveAll, shouldSyncShared]);
 
@@ -2695,6 +2721,8 @@ function Dashboard({ user, onLogout }) {
 
       setReports(syncedReports);
       saveAll(syncedReports, favorites, recentViews, notifications, requests);
+      saveCatalogRecovery(syncedReports);
+      setLocalCatalogRecovery(syncedReports);
       sharedSyncRef.current.reports = Date.now();
       setReportSyncStatus("shared");
       setReportSyncMessage("Catálogo sincronizado");
@@ -2748,6 +2776,8 @@ function Dashboard({ user, onLogout }) {
     saveAll(finalReports, favorites, recentViews, finalNotifications, requests);
     return { ...result, reports: finalReports };
   };
+
+  const recoverLocalCatalog = () => saveReports(localCatalogRecovery);
 
   const loadReportsHistory = () => fetchReportsHistory({ getAccessToken });
 
@@ -3880,6 +3910,7 @@ function Dashboard({ user, onLogout }) {
               <span>runtime: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.runtime}</strong></span>
               <span>revision: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.catalogRevision}</strong></span>
               <span>API visibles: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.visibleReports ?? "?"}/{activeCatalogDiagnostics.totalReports ?? "?"}</strong></span>
+              {activeCatalogDiagnostics.catalogDuplicatesRemoved > 0 && <span style={{ color: "#D97706" }}>duplicados saneados: <strong>{activeCatalogDiagnostics.catalogDuplicatesRemoved}</strong></span>}
             </div>
           )}
           {previewUserEmail && isAdmin(user.email) && activeView !== "admin" && (
@@ -3889,9 +3920,11 @@ function Dashboard({ user, onLogout }) {
             </div>
           )}
 
-          {activeView === "admin" && isAdmin(user.email) && (
-            <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={async (email) => { const data = await fetchReportsCatalog({ getAccessToken, previewEmail: email }); if (!Array.isArray(data.reports)) throw new Error("Respuesta inválida al verificar permisos."); setPermissionPreviewResult(data); setPreviewCatalogReports(normalizeReports(data.reports)); setPreviewUserEmail(data.previewEmail || email); navigateToView("dashboard"); return data; }} permissionPreviewResult={permissionPreviewResult} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
-          )}
+          {activeView === "admin" && isAdmin(user.email) && (catalogReady ? (
+            <AdminPanel reports={reports} recoveryReports={localCatalogRecovery} onRecoverLocal={recoverLocalCatalog} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={async (email) => { const data = await fetchReportsCatalog({ getAccessToken, previewEmail: email }); if (!Array.isArray(data.reports)) throw new Error("Respuesta inválida al verificar permisos."); setPermissionPreviewResult(data); setPreviewCatalogReports(normalizeReports(data.reports)); setPreviewUserEmail(data.previewEmail || email); navigateToView("dashboard"); return data; }} permissionPreviewResult={permissionPreviewResult} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
+          ) : (
+            <div style={{ minHeight: 320, display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, fontSize: 12 }}>Sincronizando catálogo central...</div>
+          ))}
           {/* Welcome and incident calendar - only on dashboard view */}
           {activeView === "dashboard" && (
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "stretch" }} className="metrics-grid">

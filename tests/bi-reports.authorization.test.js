@@ -62,6 +62,28 @@ test("un usuario autenticado recibe solo reportes publicados y autorizados", asy
   assert.match(body.catalogRevision, /^[a-f0-9]{16}$/);
 });
 
+test("el catálogo descarta IDs duplicados y conserva la versión más reciente", async () => {
+  const store = createStore([
+    report(UUIDS.public, { name: "Nombre anterior", version: "1.0", updatedAt: "2026-08-01T10:00:00.000Z" }),
+    report(UUIDS.public, { name: "Nombre vigente", version: "2.0", updatedAt: "2026-09-01T10:00:00.000Z" }),
+    report(UUIDS.matching, { name: "Otro reporte", updatedAt: "2026-09-01T09:00:00.000Z" }),
+  ]);
+  const handler = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "retail@pilarpy.onmicrosoft.com", isAdmin: false }),
+    getReportsStore: () => store,
+  });
+
+  const response = await handler({ httpMethod: "GET", headers: {}, queryStringParameters: {} });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.totalReports, 2);
+  assert.equal(body.visibleReports, 2);
+  assert.equal(body.catalogDuplicatesRemoved, 1);
+  assert.equal(body.reports.find((item) => item.id === UUIDS.public).name, "Nombre vigente");
+  assert.equal(body.reports.find((item) => item.id === UUIDS.public).version, "2.0");
+});
+
 test("un usuario no administrador no puede modificar el catálogo llamando la función", async () => {
   const store = createStore([report(UUIDS.public)]);
   const handler = createHandler({

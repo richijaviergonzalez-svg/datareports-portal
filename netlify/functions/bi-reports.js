@@ -79,8 +79,6 @@ function normalizeVersionHistory(value) {
 }
 
 function normalizeReport(report = {}) {
-  const now = new Date().toISOString();
-
   return {
     id: String(report.id || report.reportId || "").trim(),
     groupId: String(report.groupId || report.workspaceId || "").trim(),
@@ -124,11 +122,38 @@ function normalizeReport(report = {}) {
       ? Number(report.sortOrder)
       : 999,
 
-    createdAt: report.createdAt || now,
-    updatedAt: report.updatedAt || now,
+    createdAt: String(report.createdAt || report.updatedAt || "").trim(),
+    updatedAt: String(report.updatedAt || report.createdAt || "").trim(),
     createdBy: String(report.createdBy || "").trim(),
     updatedBy: String(report.updatedBy || "").trim(),
   };
+}
+
+function normalizeCatalog(reports = []) {
+  const canonical = new Map();
+
+  (Array.isArray(reports) ? reports : []).forEach((rawReport, index) => {
+    const report = normalizeReport(rawReport);
+    if (!report.id) return;
+
+    const timestamp = Date.parse(rawReport?.updatedAt || rawReport?.createdAt || "");
+    const candidate = {
+      report,
+      index,
+      timestamp: Number.isFinite(timestamp) ? timestamp : null,
+    };
+    const existing = canonical.get(report.id);
+    const shouldReplace = !existing
+      || (candidate.timestamp !== null && existing.timestamp === null)
+      || (candidate.timestamp !== null && existing.timestamp !== null && candidate.timestamp >= existing.timestamp)
+      || (candidate.timestamp === null && existing.timestamp === null && candidate.index > existing.index);
+
+    if (shouldReplace) canonical.set(report.id, candidate);
+  });
+
+  return [...canonical.values()]
+    .map(({ report }) => report)
+    .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 }
 
 function normalizeIdentityEmails(userEmail, userEmails = []) {
@@ -138,17 +163,8 @@ function normalizeIdentityEmails(userEmail, userEmails = []) {
 }
 
 function getCatalogRevision(reports) {
-  const permissionState = reports.map((report) => ({
-    id: report.id,
-    status: report.status,
-    visibilityMode: report.visibilityMode,
-    allowedEmails: report.allowedEmails,
-    allowedDomains: report.allowedDomains,
-    updatedAt: report.updatedAt,
-  }));
-
   return createHash("sha256")
-    .update(JSON.stringify(permissionState))
+    .update(JSON.stringify(normalizeCatalog(reports)))
     .digest("hex")
     .slice(0, 16);
 }
@@ -312,9 +328,8 @@ function createHandler(dependencies = {}) {
       }
 
       const reports = await readJSON(store, REPORTS_KEY, []);
-      const normalized = Array.isArray(reports)
-        ? reports.map(normalizeReport)
-        : [];
+      const normalized = normalizeCatalog(reports);
+      const catalogDuplicatesRemoved = Math.max(0, (Array.isArray(reports) ? reports.length : 0) - normalized.length);
       const previewEmail = String(params.previewEmail || "").trim().toLowerCase();
 
       if (previewEmail && !isAdmin) {
@@ -358,6 +373,7 @@ function createHandler(dependencies = {}) {
         previewEmail: previewEmail || null,
         totalReports: normalized.length,
         visibleReports: visibleReports.length,
+        catalogDuplicatesRemoved,
         reports: visibleReports,
         ...(permissionDiagnostics ? { permissionDiagnostics } : {}),
       }, readHeaders);
@@ -383,7 +399,7 @@ function createHandler(dependencies = {}) {
 
       const currentReports = await readJSON(store, REPORTS_KEY, []);
       await saveCatalogSnapshot(store, currentReports, { userEmail, reason: "before_rollback" });
-      const restored = (Array.isArray(snapshot.reports) ? snapshot.reports : []).map(normalizeReport);
+      const restored = normalizeCatalog(snapshot.reports);
       await writeJSON(store, REPORTS_KEY, restored);
       await appendAudit(store, {
         action: "rollback_catalog",
@@ -476,9 +492,7 @@ function createHandler(dependencies = {}) {
       }
 
       const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = Array.isArray(reports)
-        ? reports.map(normalizeReport)
-        : [];
+      const existing = normalizeCatalog(reports);
       const previousId = String(
         body.previousId || (method === "PATCH" ? incoming.id : "")
       ).trim();
@@ -531,9 +545,7 @@ function createHandler(dependencies = {}) {
       }
 
       const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = Array.isArray(reports)
-        ? reports.map(normalizeReport)
-        : [];
+      const existing = normalizeCatalog(reports);
 
       const removed = existing.find((report) => report.id === reportId);
       const updated = existing.filter((report) => report.id !== reportId);
@@ -573,4 +585,4 @@ function createHandler(dependencies = {}) {
 
 exports.createHandler = createHandler;
 exports.handler = createHandler();
-exports.__test = { canUserSeeReport, getCatalogRevision, getReportAccessDecision, normalizeReport, validateReport };
+exports.__test = { canUserSeeReport, getCatalogRevision, getReportAccessDecision, normalizeCatalog, normalizeReport, validateReport };
