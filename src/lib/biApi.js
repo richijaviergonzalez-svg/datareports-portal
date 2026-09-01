@@ -1,4 +1,4 @@
-const REPORTS_ENDPOINT = "/.netlify/functions/bi-reports";
+const REPORTS_ENDPOINT = "/.netlify/functions/bi-reports-v2";
 const REQUESTS_ENDPOINT = "/.netlify/functions/bi-requests";
 const AUDIT_ENDPOINT = "/.netlify/functions/bi-audit";
 const INCIDENTS_ENDPOINT = "/.netlify/functions/bi-incidents";
