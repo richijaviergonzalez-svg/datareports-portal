@@ -582,6 +582,115 @@ function LoginScreen({ onLogin }) {
 // ========================
 // ADMIN PANEL
 // ========================
+const extractEmailTokens = (value) => {
+  const normalized = String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g, " ")
+    .toLowerCase();
+  return [...new Set(normalized.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || [])];
+};
+
+const getEmailLabel = (email) => {
+  const localPart = String(email || "").split("@")[0];
+  const words = localPart.split(/[._-]+/).filter(Boolean);
+  return words.map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ") || email;
+};
+
+function EmailPeoplePicker({ value = [], onChange, theme }) {
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState("");
+  const emails = Array.isArray(value) ? value : extractEmailTokens(value);
+  const avatarColors = ["#2563EB", "#0891B2", "#059669", "#7C3AED", "#DB2777", "#EA580C"];
+
+  const commit = (rawValue) => {
+    const raw = String(rawValue || "").trim();
+    if (!raw) return true;
+    const candidates = extractEmailTokens(raw);
+    if (!candidates.length) {
+      setError("Correo no válido");
+      return false;
+    }
+    onChange([...new Set([...emails, ...candidates])]);
+    setDraft("");
+    setError("");
+    return true;
+  };
+
+  const removeEmail = (email) => {
+    onChange(emails.filter(item => item !== email));
+    setError("");
+  };
+
+  return (
+    <div>
+      <div style={{
+        minHeight: 48,
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 7,
+        padding: 7,
+        borderRadius: 10,
+        border: `1px solid ${error ? "#EF4444" : theme.border}`,
+        background: theme.bgSurface,
+      }}>
+        {emails.map((email) => {
+          const label = getEmailLabel(email);
+          const colorIndex = [...email].reduce((total, character) => total + character.charCodeAt(0), 0) % avatarColors.length;
+          const initials = label.split(" ").map(word => word[0]).join("").slice(0, 2).toUpperCase();
+          return (
+            <span key={email} title={email} style={{
+              height: 32,
+              maxWidth: "100%",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+              padding: "3px 5px 3px 3px",
+              borderRadius: 8,
+              border: `1px solid ${theme.border}`,
+              background: theme.bgCard,
+              color: theme.text,
+            }}>
+              <span aria-hidden="true" style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", background: avatarColors[colorIndex], color: "white", fontSize: 9, fontWeight: 700 }}>{initials}</span>
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11 }}>
+                <strong style={{ fontWeight: 600 }}>{label}</strong>
+                <span style={{ color: theme.textMuted }}> ({email.split("@")[1]})</span>
+              </span>
+              <button type="button" onClick={() => removeEmail(email)} aria-label={`Quitar ${email}`} title={`Quitar ${email}`} style={{ width: 22, height: 22, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: "50%", background: "transparent", color: theme.textMuted, cursor: "pointer", fontSize: 17, lineHeight: 1 }}>×</button>
+            </span>
+          );
+        })}
+        <input
+          type="email"
+          value={draft}
+          onChange={event => { setDraft(event.target.value); setError(""); }}
+          onBlur={() => commit(draft)}
+          onPaste={event => {
+            const pasted = event.clipboardData.getData("text");
+            if (extractEmailTokens(pasted).length) {
+              event.preventDefault();
+              commit(pasted);
+            }
+          }}
+          onKeyDown={event => {
+            if (["Enter", "Tab", ",", ";"].includes(event.key) && draft.trim()) {
+              event.preventDefault();
+              commit(draft);
+            } else if (event.key === "Backspace" && !draft && emails.length) {
+              removeEmail(emails[emails.length - 1]);
+            }
+          }}
+          placeholder={emails.length ? "Agregar usuario" : "usuario@empresa.com"}
+          aria-label="Agregar usuario permitido"
+          aria-invalid={Boolean(error)}
+          style={{ flex: "1 1 190px", minWidth: 150, height: 30, border: "none", outline: "none", background: "transparent", color: theme.text, fontSize: 11, fontFamily: "'Outfit', system-ui" }}
+        />
+      </div>
+      <div aria-live="polite" style={{ minHeight: 16, paddingTop: 4, color: "#EF4444", fontSize: 10 }}>{error}</div>
+    </div>
+  );
+}
+
 function AdminPanel({ reports, recoveryReports = [], onRecoverLocal, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, permissionPreviewResult, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const [list, setList] = useState(normalizeReports(reports));
@@ -593,7 +702,7 @@ function AdminPanel({ reports, recoveryReports = [], onRecoverLocal, onSave, onC
     owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service",
     refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "",
     version: "", releaseNotes: "", releasedAt: "", versionHistory: [],
-    visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "",
+    visibilityMode: "all", allowedEmails: [], allowedDomains: "", visibilityNote: "",
   });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [successMsg, setSuccessMsg] = useState("");
@@ -636,7 +745,7 @@ function AdminPanel({ reports, recoveryReports = [], onRecoverLocal, onSave, onC
     setUrlInput("");
     setParsed(null);
     setTestResult(null);
-    setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", version: "", releaseNotes: "", releasedAt: "", versionHistory: [], visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "" });
+    setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", version: "", releaseNotes: "", releasedAt: "", versionHistory: [], visibilityMode: "all", allowedEmails: [], allowedDomains: "", visibilityNote: "" });
     requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
   };
 
@@ -655,7 +764,7 @@ function AdminPanel({ reports, recoveryReports = [], onRecoverLocal, onSave, onC
     if (form.version && !/^[a-z0-9][a-z0-9._-]{0,19}$/i.test(form.version.trim())) return "La versión debe usar letras, números, puntos o guiones (máximo 20 caracteres).";
     if (form.releaseNotes.trim() && !form.version.trim()) return "Indicá una versión para publicar las notas de cambios.";
     if (list.some(r => r.id === form.id && r.id !== editing)) return "Ya existe un reporte configurado con ese Report ID.";
-    if (form.visibilityMode === "emails" && !form.allowedEmails.trim()) return "Para visibilidad por usuarios específicos, cargá al menos un correo.";
+    if (form.visibilityMode === "emails" && (!Array.isArray(form.allowedEmails) || form.allowedEmails.length === 0)) return "Para visibilidad por usuarios específicos, cargá al menos un correo.";
     if (form.visibilityMode === "domains" && !form.allowedDomains.trim()) return "Para visibilidad por dominio, cargá al menos un dominio.";
     return "";
   };
@@ -758,7 +867,7 @@ function AdminPanel({ reports, recoveryReports = [], onRecoverLocal, onSave, onC
       releasedAt: r.releasedAt || "",
       versionHistory: normalizeVersionHistory(r.versionHistory),
       visibilityMode: r.visibilityMode || "all",
-      allowedEmails: (r.allowedEmails || []).join(", "),
+      allowedEmails: [...(r.allowedEmails || [])],
       allowedDomains: (r.allowedDomains || []).join(", "),
       visibilityNote: r.visibilityNote || "",
     });
@@ -1024,7 +1133,7 @@ function AdminPanel({ reports, recoveryReports = [], onRecoverLocal, onSave, onC
               {form.visibilityMode === "emails" && (
                 <div style={{ marginBottom: 12 }}>
                   <label style={mutedLabel}>Correos permitidos</label>
-                  <textarea value={form.allowedEmails} onChange={e => setForm({ ...form, allowedEmails: e.target.value })} placeholder="usuario1@empresa.com, usuario2@empresa.com" style={{ ...inputStyle, minHeight: 58, resize: "vertical", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}/>
+                  <EmailPeoplePicker value={form.allowedEmails} onChange={allowedEmails => setForm(current => ({ ...current, allowedEmails }))} theme={theme}/>
                 </div>
               )}
               {form.visibilityMode === "domains" && (
