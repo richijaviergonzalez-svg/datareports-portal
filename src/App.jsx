@@ -596,7 +596,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [catalogSearch, setCatalogSearch] = useState("");
-  const [previewEmail, setPreviewEmail] = useState("");
+  const [previewEmail, setPreviewEmail] = useState(permissionPreviewResult?.previewEmail || "");
   const [historyEntries, setHistoryEntries] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
