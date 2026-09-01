@@ -576,7 +576,7 @@ function LoginScreen({ onLogin }) {
 // ========================
 // ADMIN PANEL
 // ========================
-function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
+function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, permissionPreviewResult, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const [list, setList] = useState(normalizeReports(reports));
   const [editing, setEditing] = useState(null);
@@ -835,9 +835,12 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
     if (!query) return true;
     return [report.name, report.category, report.owner, report.version].some(value => String(value || "").toLowerCase().includes(query));
   });
-  const previewVisibleReports = previewEmail.trim()
-    ? list.filter((report) => canUserViewReport(report, { email: previewEmail.trim() }))
-    : [];
+  const normalizedPreviewEmail = previewEmail.trim().toLowerCase();
+  const activePreviewResult = permissionPreviewResult?.previewEmail === normalizedPreviewEmail
+    ? permissionPreviewResult
+    : null;
+  const previewMismatches = (activePreviewResult?.permissionDiagnostics || [])
+    .filter((item) => !item.visible);
 
   return (
     <div style={standalone ? { position: "relative", width: "100%" } : { position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 16 }}>
@@ -1042,7 +1045,29 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
                   <input type="email" value={previewEmail} onChange={e => setPreviewEmail(e.target.value)} placeholder="usuario@empresa.com" style={{ ...inputStyle, minWidth: 0, padding: "8px 9px", fontSize: 10 }}/>
                   <button onClick={handlePermissionPreview} disabled={!previewEmail.trim() || previewLoading} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 9, padding: "0 9px", cursor: previewEmail.trim() && !previewLoading ? "pointer" : "not-allowed", fontSize: 10, fontWeight: 700 }}>{previewLoading ? "Verificando..." : "Ver como"}</button>
                 </div>
-                {previewEmail.trim() && <p style={{ marginTop: 7, fontSize: 10, color: theme.textMuted }}><strong style={{ color: theme.text }}>{previewVisibleReports.length}</strong> de {list.length} reportes visibles</p>}
+                {activePreviewResult && (
+                  <div style={{ marginTop: 8, fontSize: 10, color: theme.textMuted }}>
+                    <p><strong style={{ color: theme.text }}>{activePreviewResult.visibleReports}</strong> de {activePreviewResult.totalReports} reportes autorizados por el catálogo publicado</p>
+                    {previewMismatches.length > 0 && (
+                      <details style={{ marginTop: 7 }}>
+                        <summary style={{ cursor: "pointer", color: T.teal, fontWeight: 700 }}>Ver {previewMismatches.length} exclusiones</summary>
+                        <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 6, maxHeight: 190, overflowY: "auto" }}>
+                          {previewMismatches.map((item) => (
+                            <div key={item.id} style={{ padding: "7px 8px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgCard }}>
+                              <strong style={{ display: "block", color: theme.text, lineHeight: 1.25 }}>{item.name}</strong>
+                              <span style={{ display: "block", marginTop: 3 }}>
+                                {item.reason === "email-mismatch" && `Asignado a: ${(item.allowedEmails || []).join(", ") || "sin correos"}`}
+                                {item.reason === "domain-mismatch" && `Dominios: ${(item.allowedDomains || []).join(", ") || "sin dominios"}`}
+                                {item.reason === "draft" && "El reporte está en borrador"}
+                                {item.reason === "admins-only" && "Visible solo para administradores"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2247,6 +2272,7 @@ function Dashboard({ user, onLogout }) {
   const [subscriptions, setSubscriptions] = useState([]);
   const [previewUserEmail, setPreviewUserEmail] = useState("");
   const [previewCatalogReports, setPreviewCatalogReports] = useState(null);
+  const [permissionPreviewResult, setPermissionPreviewResult] = useState(null);
   const [catalogIdentityEmails, setCatalogIdentityEmails] = useState(() => [String(user?.email || "").trim().toLowerCase()].filter(Boolean));
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
@@ -3815,7 +3841,7 @@ function Dashboard({ user, onLogout }) {
           )}
 
           {activeView === "admin" && isAdmin(user.email) && (
-            <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={async (email) => { const data = await fetchReportsCatalog({ getAccessToken, previewEmail: email }); if (!Array.isArray(data.reports)) throw new Error("Respuesta inválida al verificar permisos."); setPreviewCatalogReports(normalizeReports(data.reports)); setPreviewUserEmail(data.previewEmail || email); navigateToView("dashboard"); }} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
+            <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={async (email) => { const data = await fetchReportsCatalog({ getAccessToken, previewEmail: email }); if (!Array.isArray(data.reports)) throw new Error("Respuesta inválida al verificar permisos."); setPermissionPreviewResult(data); setPreviewCatalogReports(normalizeReports(data.reports)); setPreviewUserEmail(data.previewEmail || email); navigateToView("dashboard"); return data; }} permissionPreviewResult={permissionPreviewResult} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
           )}
           {/* Welcome and incident calendar - only on dashboard view */}
           {activeView === "dashboard" && (

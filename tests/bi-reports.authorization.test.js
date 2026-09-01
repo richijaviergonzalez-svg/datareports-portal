@@ -135,6 +135,23 @@ test("la vista de permisos del admin se calcula en el backend", async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(body.previewEmail, "lorena.caballero@pilarpy.onmicrosoft.com");
   assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
+  assert.deepEqual(body.permissionDiagnostics.map((item) => ({ id: item.id, visible: item.visible, reason: item.reason })), [
+    { id: UUIDS.public, visible: true, reason: "all-users" },
+    { id: UUIDS.matching, visible: true, reason: "email-match" },
+    { id: UUIDS.private, visible: false, reason: "email-mismatch" },
+  ]);
+  assert.deepEqual(body.permissionDiagnostics[2].allowedEmails, ["otra@pilarpy.onmicrosoft.com"]);
+});
+
+test("no expone el diagnóstico de permisos a usuarios comunes", async () => {
+  const handler = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "lorena.caballero@pilarpy.onmicrosoft.com", isAdmin: false }),
+    getReportsStore: () => createStore([report(UUIDS.public)]),
+  });
+  const response = await handler({ httpMethod: "GET", headers: {}, queryStringParameters: {} });
+  const body = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.permissionDiagnostics, undefined);
 });
 
 test("un usuario común no puede simular los permisos de otra persona", async () => {

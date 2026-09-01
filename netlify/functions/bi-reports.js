@@ -136,28 +136,35 @@ function normalizeIdentityEmails(userEmail, userEmails = []) {
     .filter((value) => value.includes("@")))];
 }
 
-function canUserSeeReport(report, userEmail, isAdmin, userEmails = []) {
-  if (isAdmin) return true;
-
+function getReportAccessDecision(report, userEmail, isAdmin, userEmails = []) {
   const normalizedReport = normalizeReport(report);
-  if (normalizedReport.status === "draft") return false;
+  if (isAdmin) return { visible: true, reason: "admin" };
+  if (normalizedReport.status === "draft") return { visible: false, reason: "draft" };
   const identityEmails = normalizeIdentityEmails(userEmail, userEmails);
   const identityDomains = identityEmails.map((email) => email.split("@").pop());
 
   switch (normalizedReport.visibilityMode) {
     case "admins":
-      return false;
+      return { visible: false, reason: "admins-only" };
 
     case "emails":
-      return normalizedReport.allowedEmails.some((email) => identityEmails.includes(email));
+      return normalizedReport.allowedEmails.some((email) => identityEmails.includes(email))
+        ? { visible: true, reason: "email-match" }
+        : { visible: false, reason: "email-mismatch" };
 
     case "domains":
-      return normalizedReport.allowedDomains.some((domain) => identityDomains.includes(domain));
+      return normalizedReport.allowedDomains.some((domain) => identityDomains.includes(domain))
+        ? { visible: true, reason: "domain-match" }
+        : { visible: false, reason: "domain-mismatch" };
 
     case "all":
     default:
-      return true;
+      return { visible: true, reason: "all-users" };
   }
+}
+
+function canUserSeeReport(report, userEmail, isAdmin, userEmails = []) {
+  return getReportAccessDecision(report, userEmail, isAdmin, userEmails).visible;
 }
 
 async function readJSON(store, key, fallback) {
@@ -299,10 +306,28 @@ function createHandler(dependencies = {}) {
       const evaluatedEmail = previewEmail || userEmail;
       const evaluatedEmails = previewEmail ? [previewEmail] : auth.userEmails;
       const evaluatedAsAdmin = previewEmail ? false : isAdmin;
+      const accessDecisions = normalized.map((report) => ({
+        report,
+        decision: getReportAccessDecision(report, evaluatedEmail, evaluatedAsAdmin, evaluatedEmails),
+      }));
 
-      const visibleReports = normalized
-        .filter((report) => canUserSeeReport(report, evaluatedEmail, evaluatedAsAdmin, evaluatedEmails))
+      const visibleReports = accessDecisions
+        .filter(({ decision }) => decision.visible)
+        .map(({ report }) => report)
         .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
+
+      const permissionDiagnostics = previewEmail && isAdmin
+        ? accessDecisions.map(({ report, decision }) => ({
+          id: report.id,
+          name: report.name,
+          visible: decision.visible,
+          reason: decision.reason,
+          status: report.status,
+          visibilityMode: report.visibilityMode,
+          allowedEmails: report.visibilityMode === "emails" ? report.allowedEmails : [],
+          allowedDomains: report.visibilityMode === "domains" ? report.allowedDomains : [],
+        }))
+        : undefined;
 
       return json(200, {
         ok: true,
@@ -314,6 +339,7 @@ function createHandler(dependencies = {}) {
         totalReports: normalized.length,
         visibleReports: visibleReports.length,
         reports: visibleReports,
+        ...(permissionDiagnostics ? { permissionDiagnostics } : {}),
       }, readHeaders);
     }
 
@@ -527,4 +553,4 @@ function createHandler(dependencies = {}) {
 
 exports.createHandler = createHandler;
 exports.handler = createHandler();
-exports.__test = { canUserSeeReport, normalizeReport, validateReport };
+exports.__test = { canUserSeeReport, getReportAccessDecision, normalizeReport, validateReport };
