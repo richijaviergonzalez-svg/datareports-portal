@@ -55,6 +55,7 @@ import {
 import {
   createBiAuditEvent,
   createBiRequest,
+  deleteReportCatalogItem,
   fetchBiAuditEvents,
   fetchBiIncidents,
   fetchBiRequests,
@@ -64,6 +65,7 @@ import {
   rollbackReportsCatalog,
   saveBiIncidents,
   saveReportSubscriptions,
+  saveReportCatalogItem,
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
@@ -2708,18 +2710,60 @@ function Dashboard({ user, onLogout }) {
   const pushSharedReports = async (newReports) => {
     const cleanReports = normalizeReports(newReports);
     const previousReports = normalizeReports(reports);
+    const previousById = new Map(previousReports.map(report => [report.id, report]));
+    const nextById = new Map(cleanReports.map(report => [report.id, report]));
+    const addedReports = cleanReports.filter(report => !previousById.has(report.id));
+    const removedReports = previousReports.filter(report => !nextById.has(report.id));
+    const changedReports = cleanReports.filter(report => {
+      const previous = previousById.get(report.id);
+      return previous && JSON.stringify(previous) !== JSON.stringify(report);
+    });
 
     // Actualización optimista: el cambio se ve en pantalla de inmediato.
     setReports(cleanReports);
     saveAll(cleanReports, favorites, recentViews, notifications, requests);
 
     try {
-      const data = await saveReportsCatalog({
-        getAccessToken,
-        reports: cleanReports,
-        user: { name: user?.name, email: user?.email },
-      });
-      const syncedReports = normalizeReports(data.reports || cleanReports);
+      let data;
+      let expectedReport = null;
+
+      if (addedReports.length === 1 && removedReports.length === 0 && changedReports.length === 0) {
+        expectedReport = addedReports[0];
+        data = await saveReportCatalogItem({ getAccessToken, report: expectedReport, create: true });
+      } else if (addedReports.length === 0 && removedReports.length === 1 && changedReports.length === 0) {
+        data = await deleteReportCatalogItem({ getAccessToken, reportId: removedReports[0].id });
+      } else if (addedReports.length === 0 && removedReports.length === 0 && changedReports.length === 1) {
+        expectedReport = changedReports[0];
+        data = await saveReportCatalogItem({ getAccessToken, report: expectedReport });
+      } else if (addedReports.length === 1 && removedReports.length === 1 && changedReports.length === 0) {
+        expectedReport = addedReports[0];
+        data = await saveReportCatalogItem({
+          getAccessToken,
+          report: expectedReport,
+          previousId: removedReports[0].id,
+        });
+      } else {
+        data = await saveReportsCatalog({
+          getAccessToken,
+          reports: cleanReports,
+          user: { name: user?.name, email: user?.email },
+        });
+      }
+
+      const confirmation = await fetchReportsCatalog({ getAccessToken });
+      if (data.catalogRevision && confirmation.catalogRevision !== data.catalogRevision) {
+        throw new Error("El catálogo cambió durante la verificación. Volvé a intentar el guardado.");
+      }
+
+      const syncedReports = normalizeReports(confirmation.reports || data.reports || cleanReports);
+      if (expectedReport) {
+        const persistedReport = syncedReports.find(report => report.id === expectedReport.id);
+        const expectedEmails = normalizeReport(expectedReport).allowedEmails;
+        const persistedEmails = normalizeReport(persistedReport).allowedEmails;
+        if (!persistedReport || JSON.stringify(persistedEmails) !== JSON.stringify(expectedEmails)) {
+          throw new Error("El catálogo no confirmó los correos permitidos del reporte.");
+        }
+      }
 
       setReports(syncedReports);
       saveAll(syncedReports, favorites, recentViews, notifications, requests);

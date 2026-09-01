@@ -95,29 +95,35 @@ test("un usuario no administrador no puede modificar el catálogo llamando la fu
   assert.equal(store.writes, 0);
 });
 
-test("un permiso guardado por correo se conserva y autoriza al usuario", async () => {
-  const store = createStore([report(UUIDS.public)]);
+test("una actualización atómica conserva el catálogo y autoriza al usuario", async () => {
+  const store = createStore([
+    report(UUIDS.public),
+    report(UUIDS.matching, {
+      visibilityMode: "emails",
+      allowedEmails: ["admin@pilarpy.onmicrosoft.com"],
+    }),
+  ]);
   const adminHandler = createHandler({
     authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", isAdmin: true }),
     getReportsStore: () => store,
   });
 
   const saveResponse = await adminHandler({
-    httpMethod: "PUT",
+    httpMethod: "PATCH",
     headers: {},
     body: JSON.stringify({
-      reports: [
-        report(UUIDS.matching, {
+      report: report(UUIDS.matching, {
           visibilityMode: "emails",
           allowedEmails: ["Lorena Caballero < Lorena.Caballero\u200B@PilarPy.onmicrosoft.com >"],
         }),
-      ],
+      previousId: UUIDS.matching,
     }),
   });
   const savedBody = JSON.parse(saveResponse.body);
 
   assert.equal(saveResponse.statusCode, 200);
-  assert.deepEqual(savedBody.reports[0].allowedEmails, [
+  assert.equal(savedBody.reports.length, 2);
+  assert.deepEqual(savedBody.report.allowedEmails, [
     "lorena.caballero@pilarpy.onmicrosoft.com",
   ]);
 
@@ -137,8 +143,8 @@ test("un permiso guardado por correo se conserva y autoriza al usuario", async (
   const readBody = JSON.parse(readResponse.body);
 
   assert.equal(readResponse.statusCode, 200);
-  assert.equal(readBody.visibleReports, 1);
-  assert.deepEqual(readBody.reports.map((item) => item.id), [UUIDS.matching]);
+  assert.equal(readBody.visibleReports, 2);
+  assert.deepEqual(readBody.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
 });
 
 test("autoriza reportes asignados a un alias firmado de la misma cuenta", async () => {

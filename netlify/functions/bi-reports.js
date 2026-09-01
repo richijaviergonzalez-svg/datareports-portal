@@ -212,7 +212,7 @@ function canUserSeeReport(report, userEmail, isAdmin, userEmails = []) {
 
 async function readJSON(store, key, fallback) {
   try {
-    const data = await store.get(key, { type: "json" });
+    const data = await store.get(key, { type: "json", consistency: "strong" });
     return data || fallback;
   } catch (error) {
     console.error(`Error reading ${key}:`, error);
@@ -582,7 +582,7 @@ function createHandler(dependencies = {}) {
       const updated = existing.filter((report) => report.id !== reportId);
 
       await saveCatalogSnapshot(store, existing, { userEmail, reason: "delete_report" });
-      await writeJSON(store, REPORTS_KEY, updated);
+      const persisted = await writeVerifiedCatalog(store, updated);
 
       await appendAudit(store, {
         action: "delete_report",
@@ -595,7 +595,8 @@ function createHandler(dependencies = {}) {
         ok: true,
         source: "netlify-blobs",
         deleted: reportId,
-        reports: updated,
+        catalogRevision: getCatalogRevision(persisted),
+        reports: persisted,
       });
     }
 

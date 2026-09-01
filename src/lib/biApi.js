@@ -49,6 +49,28 @@ export async function saveReportsCatalog({ getAccessToken, reports, user }) {
   return readJson(response, "No se pudo sincronizar el catalogo");
 }
 
+export async function saveReportCatalogItem({ getAccessToken, report, previousId = "", create = false }) {
+  const response = await fetch(REPORTS_ENDPOINT, {
+    method: create ? "POST" : "PATCH",
+    headers: await buildAuthHeaders(getAccessToken, {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    }),
+    body: JSON.stringify({ report, previousId }),
+  });
+
+  return readJson(response, "No se pudo guardar el reporte en el catálogo");
+}
+
+export async function deleteReportCatalogItem({ getAccessToken, reportId }) {
+  const response = await fetch(`${REPORTS_ENDPOINT}?id=${encodeURIComponent(reportId)}`, {
+    method: "DELETE",
+    headers: await buildAuthHeaders(getAccessToken, { Accept: "application/json" }),
+  });
+
+  return readJson(response, "No se pudo eliminar el reporte del catálogo");
+}
+
 export async function fetchReportsHistory({ getAccessToken }) {
   const response = await fetch(`${REPORTS_ENDPOINT}?history=1`, {
     method: "GET",
