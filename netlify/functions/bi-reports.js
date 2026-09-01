@@ -24,6 +24,19 @@ function json(statusCode, body, responseHeaders = headers) {
 }
 
 function getReportsStore(event) {
+  const siteID = String(process.env.NETLIFY_SITE_ID || "").trim();
+  const token = String(process.env.NETLIFY_BLOBS_TOKEN || "").trim();
+
+  // API access reads from the origin and is strongly consistent. This avoids
+  // different users receiving different catalog revisions from edge replicas.
+  if (siteID && token) {
+    return getStore({
+      name: STORE_NAME,
+      siteID,
+      token,
+    });
+  }
+
   connectLambda(event);
   return getStore(STORE_NAME);
 }
