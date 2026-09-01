@@ -338,6 +338,7 @@ function createHandler(dependencies = {}) {
 
       const evaluatedEmail = previewEmail || userEmail;
       const evaluatedEmails = previewEmail ? [previewEmail] : auth.userEmails;
+      const normalizedEvaluatedEmails = normalizeIdentityEmails(evaluatedEmail, evaluatedEmails);
       const evaluatedAsAdmin = previewEmail ? false : isAdmin;
       const accessDecisions = normalized.map((report) => ({
         report,
@@ -369,6 +370,7 @@ function createHandler(dependencies = {}) {
         catalogRevision: getCatalogRevision(normalized),
         userEmail,
         userEmails: normalizeIdentityEmails(userEmail, auth.userEmails),
+        evaluatedEmails: normalizedEvaluatedEmails,
         isAdmin,
         previewEmail: previewEmail || null,
         totalReports: normalized.length,

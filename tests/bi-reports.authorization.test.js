@@ -160,6 +160,7 @@ test("la vista de permisos del admin se calcula en el backend", async () => {
   assert.equal(response.statusCode, 200);
   assert.equal(body.runtime, "modern-strong");
   assert.equal(body.previewEmail, "lorena.caballero@pilarpy.onmicrosoft.com");
+  assert.deepEqual(body.evaluatedEmails, ["lorena.caballero@pilarpy.onmicrosoft.com"]);
   assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
   assert.deepEqual(body.permissionDiagnostics.map((item) => ({ id: item.id, visible: item.visible, reason: item.reason })), [
     { id: UUIDS.public, visible: true, reason: "all-users" },
