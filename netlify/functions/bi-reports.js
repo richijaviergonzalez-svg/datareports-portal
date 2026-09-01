@@ -162,7 +162,7 @@ function canUserSeeReport(report, userEmail, isAdmin, userEmails = []) {
 
 async function readJSON(store, key, fallback) {
   try {
-    const data = await store.get(key, { type: "json", consistency: "strong" });
+    const data = await store.get(key, { type: "json" });
     return data || fallback;
   } catch (error) {
     console.error(`Error reading ${key}:`, error);

@@ -57,7 +57,7 @@ test("un usuario autenticado recibe solo reportes publicados y autorizados", asy
   const body = JSON.parse(response.body);
   assert.equal(response.statusCode, 200);
   assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
-  assert.equal(store.lastReadOptions.consistency, "strong");
+  assert.equal(store.lastReadOptions.type, "json");
 });
 
 test("un usuario no administrador no puede modificar el catálogo llamando la función", async () => {
