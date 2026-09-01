@@ -16,7 +16,8 @@ function createStore(reports = []) {
   const values = new Map([["reports.json", reports]]);
   return {
     writes: 0,
-    async get(key) { return values.get(key); },
+    lastReadOptions: null,
+    async get(key, options) { this.lastReadOptions = options; return values.get(key); },
     async setJSON(key, value) { this.writes += 1; values.set(key, value); },
   };
 }
@@ -56,6 +57,7 @@ test("un usuario autenticado recibe solo reportes publicados y autorizados", asy
   const body = JSON.parse(response.body);
   assert.equal(response.statusCode, 200);
   assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
+  assert.equal(store.lastReadOptions.consistency, "strong");
 });
 
 test("un usuario no administrador no puede modificar el catálogo llamando la función", async () => {
@@ -110,4 +112,42 @@ test("normaliza los correos alternativos presentes en el token de Microsoft", ()
     "lorena@pilarpy.onmicrosoft.com",
     "lorena.caballero@pilarpy.onmicrosoft.com",
   ]);
+});
+
+test("la vista de permisos del admin se calcula en el backend", async () => {
+  const store = createStore([
+    report(UUIDS.public),
+    report(UUIDS.matching, { visibilityMode: "emails", allowedEmails: ["lorena.caballero@pilarpy.onmicrosoft.com"] }),
+    report(UUIDS.private, { visibilityMode: "emails", allowedEmails: ["otra@pilarpy.onmicrosoft.com"] }),
+  ]);
+  const handler = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", isAdmin: true }),
+    getReportsStore: () => store,
+  });
+
+  const response = await handler({
+    httpMethod: "GET",
+    headers: {},
+    queryStringParameters: { previewEmail: "Lorena.Caballero@PilarPy.onmicrosoft.com" },
+  });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.previewEmail, "lorena.caballero@pilarpy.onmicrosoft.com");
+  assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.matching, UUIDS.public].sort());
+});
+
+test("un usuario común no puede simular los permisos de otra persona", async () => {
+  const handler = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "retail@pilarpy.onmicrosoft.com", isAdmin: false }),
+    getReportsStore: () => createStore([report(UUIDS.public)]),
+  });
+
+  const response = await handler({
+    httpMethod: "GET",
+    headers: {},
+    queryStringParameters: { previewEmail: "otra@pilarpy.onmicrosoft.com" },
+  });
+
+  assert.equal(response.statusCode, 403);
 });

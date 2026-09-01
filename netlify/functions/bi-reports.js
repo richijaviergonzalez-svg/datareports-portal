@@ -162,7 +162,7 @@ function canUserSeeReport(report, userEmail, isAdmin, userEmails = []) {
 
 async function readJSON(store, key, fallback) {
   try {
-    const data = await store.get(key, { type: "json" });
+    const data = await store.get(key, { type: "json", consistency: "strong" });
     return data || fallback;
   } catch (error) {
     console.error(`Error reading ${key}:`, error);
@@ -290,9 +290,18 @@ function createHandler(dependencies = {}) {
       const normalized = Array.isArray(reports)
         ? reports.map(normalizeReport)
         : [];
+      const previewEmail = String(params.previewEmail || "").trim().toLowerCase();
+
+      if (previewEmail && !isAdmin) {
+        return json(403, { ok: false, error: "No autorizado. Solo administradores pueden simular permisos." });
+      }
+
+      const evaluatedEmail = previewEmail || userEmail;
+      const evaluatedEmails = previewEmail ? [previewEmail] : auth.userEmails;
+      const evaluatedAsAdmin = previewEmail ? false : isAdmin;
 
       const visibleReports = normalized
-        .filter((report) => canUserSeeReport(report, userEmail, isAdmin, auth.userEmails))
+        .filter((report) => canUserSeeReport(report, evaluatedEmail, evaluatedAsAdmin, evaluatedEmails))
         .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 
       return json(200, {
@@ -301,6 +310,7 @@ function createHandler(dependencies = {}) {
         userEmail,
         userEmails: normalizeIdentityEmails(userEmail, auth.userEmails),
         isAdmin,
+        previewEmail: previewEmail || null,
         totalReports: normalized.length,
         visibleReports: visibleReports.length,
         reports: visibleReports,

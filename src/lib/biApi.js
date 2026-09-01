@@ -23,8 +23,9 @@ async function readJson(response, fallbackMessage) {
   return data;
 }
 
-export async function fetchReportsCatalog({ getAccessToken }) {
-  const response = await fetch(REPORTS_ENDPOINT, {
+export async function fetchReportsCatalog({ getAccessToken, previewEmail = "" }) {
+  const query = previewEmail ? `?previewEmail=${encodeURIComponent(previewEmail)}` : "";
+  const response = await fetch(`${REPORTS_ENDPOINT}${query}`, {
     method: "GET",
     cache: "no-store",
     headers: await buildAuthHeaders(getAccessToken, {

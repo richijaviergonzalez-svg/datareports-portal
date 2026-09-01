@@ -600,12 +600,25 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
   const [historyEntries, setHistoryEntries] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const editorScrollRef = useRef(null);
 
   useEffect(() => setList(normalizeReports(reports)), [reports]);
 
   const showSuccess = (msg) => { setSuccessMsg(msg); setErrorMsg(""); setTimeout(() => setSuccessMsg(""), 2800); };
   const showError = (msg) => { setErrorMsg(msg); setSuccessMsg(""); setTimeout(() => setErrorMsg(""), 4200); };
+  const handlePermissionPreview = async () => {
+    const email = previewEmail.trim();
+    if (!email || previewLoading) return;
+    setPreviewLoading(true);
+    try {
+      await onPreviewUser?.(email);
+    } catch (error) {
+      showError(error.message || "No se pudo verificar la vista de permisos.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   const resetForm = () => {
     setEditing(null);
@@ -1027,7 +1040,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
                 <label style={{ ...mutedLabel, marginBottom: 6 }}>Vista previa de permisos</label>
                 <div style={{ display: "flex", gap: 6 }}>
                   <input type="email" value={previewEmail} onChange={e => setPreviewEmail(e.target.value)} placeholder="usuario@empresa.com" style={{ ...inputStyle, minWidth: 0, padding: "8px 9px", fontSize: 10 }}/>
-                  <button onClick={() => previewEmail.trim() && onPreviewUser?.(previewEmail.trim())} disabled={!previewEmail.trim()} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 9, padding: "0 9px", cursor: previewEmail.trim() ? "pointer" : "not-allowed", fontSize: 10, fontWeight: 700 }}>Ver como</button>
+                  <button onClick={handlePermissionPreview} disabled={!previewEmail.trim() || previewLoading} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 9, padding: "0 9px", cursor: previewEmail.trim() && !previewLoading ? "pointer" : "not-allowed", fontSize: 10, fontWeight: 700 }}>{previewLoading ? "Verificando..." : "Ver como"}</button>
                 </div>
                 {previewEmail.trim() && <p style={{ marginTop: 7, fontSize: 10, color: theme.textMuted }}><strong style={{ color: theme.text }}>{previewVisibleReports.length}</strong> de {list.length} reportes visibles</p>}
               </div>
@@ -2233,6 +2246,7 @@ function Dashboard({ user, onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [subscriptions, setSubscriptions] = useState([]);
   const [previewUserEmail, setPreviewUserEmail] = useState("");
+  const [previewCatalogReports, setPreviewCatalogReports] = useState(null);
   const [catalogIdentityEmails, setCatalogIdentityEmails] = useState(() => [String(user?.email || "").trim().toLowerCase()].filter(Boolean));
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
@@ -3066,7 +3080,10 @@ function Dashboard({ user, onLogout }) {
   const effectiveCatalogUser = previewUserEmail && isAdmin(user.email)
     ? { ...user, email: previewUserEmail, emails: [previewUserEmail] }
     : { ...user, email: catalogIdentityEmails[0] || user.email, emails: catalogIdentityEmails };
-  const userVisibleReports = reports.filter(r => canUserViewReport(r, effectiveCatalogUser));
+  const catalogForCurrentView = previewUserEmail && isAdmin(user.email) && Array.isArray(previewCatalogReports)
+    ? previewCatalogReports
+    : reports;
+  const userVisibleReports = catalogForCurrentView.filter(r => canUserViewReport(r, effectiveCatalogUser));
   const categories = ["Todos", ...new Set(userVisibleReports.map(r => r.category))];
   let filtered = userVisibleReports.filter(r => {
     const matchCat = activeCategory === "Todos" || r.category === activeCategory;
@@ -3793,12 +3810,12 @@ function Dashboard({ user, onLogout }) {
           {previewUserEmail && isAdmin(user.email) && activeView !== "admin" && (
             <div style={{ marginBottom: 14, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "10" : T.tealBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div><strong style={{ color: theme.text, fontSize: 12 }}>Vista de permisos</strong><span style={{ color: theme.textMuted, fontSize: 11 }}> · Estás viendo el catálogo disponible para {previewUserEmail}</span></div>
-              <button onClick={() => setPreviewUserEmail("")} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgCard, color: T.teal, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Salir de la vista</button>
+              <button onClick={() => { setPreviewUserEmail(""); setPreviewCatalogReports(null); }} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgCard, color: T.teal, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Salir de la vista</button>
             </div>
           )}
 
           {activeView === "admin" && isAdmin(user.email) && (
-            <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={(email) => { setPreviewUserEmail(email); navigateToView("dashboard"); }} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
+            <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={async (email) => { const data = await fetchReportsCatalog({ getAccessToken, previewEmail: email }); if (!Array.isArray(data.reports)) throw new Error("Respuesta inválida al verificar permisos."); setPreviewCatalogReports(normalizeReports(data.reports)); setPreviewUserEmail(data.previewEmail || email); navigateToView("dashboard"); }} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
           )}
           {/* Welcome and incident calendar - only on dashboard view */}
           {activeView === "dashboard" && (
