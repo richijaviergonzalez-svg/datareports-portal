@@ -2233,6 +2233,7 @@ function Dashboard({ user, onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [subscriptions, setSubscriptions] = useState([]);
   const [previewUserEmail, setPreviewUserEmail] = useState("");
+  const [catalogIdentityEmails, setCatalogIdentityEmails] = useState(() => [String(user?.email || "").trim().toLowerCase()].filter(Boolean));
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
   const [incidents, setIncidents] = useState([]);
@@ -2536,6 +2537,10 @@ function Dashboard({ user, onLogout }) {
     try {
       const data = await fetchReportsCatalog({ getAccessToken });
       if (!Array.isArray(data.reports)) throw new Error("invalid-shared-reports-response");
+      const verifiedEmails = (Array.isArray(data.userEmails) ? data.userEmails : [data.userEmail])
+        .map(value => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (verifiedEmails.length) setCatalogIdentityEmails(verifiedEmails);
 
       // Netlify Blobs es la fuente oficial. Si el admin eliminó reportes, también debe verse vacío.
       const sharedReports = normalizeReports(data.reports);
@@ -2602,6 +2607,7 @@ function Dashboard({ user, onLogout }) {
 
   const pushSharedReports = async (newReports) => {
     const cleanReports = normalizeReports(newReports);
+    const previousReports = normalizeReports(reports);
 
     // Actualización optimista: el cambio se ve en pantalla de inmediato.
     setReports(cleanReports);
@@ -2622,15 +2628,14 @@ function Dashboard({ user, onLogout }) {
       setReportSyncMessage("Catálogo sincronizado");
       return { ok: true, synced: true, reports: syncedReports };
     } catch (e) {
-      const localReports = normalizeReports(newReports);
-      setReports(localReports);
-      saveAll(localReports, favorites, recentViews, notifications, requests);
+      setReports(previousReports);
+      saveAll(previousReports, favorites, recentViews, notifications, requests);
       setReportSyncStatus("local");
-      setReportSyncMessage(e.message || "Cambios guardados localmente");
+      setReportSyncMessage(`No publicado: ${e.message || "no se pudo sincronizar el catálogo central"}`);
       return {
         ok: false,
         synced: false,
-        reports: localReports,
+        reports: previousReports,
         error: e.message || "No se pudo sincronizar el catálogo central",
       };
     }
@@ -2651,10 +2656,11 @@ function Dashboard({ user, onLogout }) {
         ...versionUpdates.map(r => ({ id: Date.now() + Math.random(), type: "update", message: `${r.name} actualizado a v${r.version}`, time: new Date().toISOString(), reportId: r.id, read: false })),
         ...notifications,
       ].slice(0, 20);
-      setNotifications(updatedNotifs);
     }
     const result = await pushSharedReports(cleanReports);
     const finalReports = normalizeReports(result.reports || cleanReports);
+    const finalNotifications = result.ok ? updatedNotifs : notifications;
+    if (result.ok && finalNotifications !== notifications) setNotifications(finalNotifications);
 
     // Mantener sincronizados los paneles abiertos sin obligar a recargar la página.
     if (selectedReport) {
@@ -2667,7 +2673,7 @@ function Dashboard({ user, onLogout }) {
       if (updatedDetail) setDetailReport(updatedDetail);
     }
 
-    saveAll(finalReports, favorites, recentViews, updatedNotifs, requests);
+    saveAll(finalReports, favorites, recentViews, finalNotifications, requests);
     return { ...result, reports: finalReports };
   };
 
@@ -3057,7 +3063,9 @@ function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener("keydown", handler);
   }, [navigateToView, openAdminPanel, user.email]);
 
-  const effectiveCatalogUser = previewUserEmail && isAdmin(user.email) ? { ...user, email: previewUserEmail } : user;
+  const effectiveCatalogUser = previewUserEmail && isAdmin(user.email)
+    ? { ...user, email: previewUserEmail, emails: [previewUserEmail] }
+    : { ...user, email: catalogIdentityEmails[0] || user.email, emails: catalogIdentityEmails };
   const userVisibleReports = reports.filter(r => canUserViewReport(r, effectiveCatalogUser));
   const categories = ["Todos", ...new Set(userVisibleReports.map(r => r.category))];
   let filtered = userVisibleReports.filter(r => {

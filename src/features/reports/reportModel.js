@@ -90,8 +90,8 @@ export const normalizeReport = (report = {}, index = 0) => {
     releasedAt: String(report.releasedAt || "").trim(),
     versionHistory: normalizeVersionHistory(report.versionHistory || report.changelog),
     visibilityMode: report.visibilityMode || "all",
-    allowedEmails: Array.isArray(report.allowedEmails) ? report.allowedEmails : String(report.allowedEmails || "").split(/[;,\n]/).map(v => v.trim().toLowerCase()).filter(Boolean),
-    allowedDomains: Array.isArray(report.allowedDomains) ? report.allowedDomains : String(report.allowedDomains || "").split(/[;,\n]/).map(v => v.trim().toLowerCase().replace(/^@/, "")).filter(Boolean),
+    allowedEmails: (Array.isArray(report.allowedEmails) ? report.allowedEmails : String(report.allowedEmails || "").split(/[;,\n]/)).map(v => String(v || "").trim().toLowerCase()).filter(Boolean),
+    allowedDomains: (Array.isArray(report.allowedDomains) ? report.allowedDomains : String(report.allowedDomains || "").split(/[;,\n]/)).map(v => String(v || "").trim().toLowerCase().replace(/^@/, "")).filter(Boolean),
     visibilityNote: report.visibilityNote || "",
     createdAt: report.createdAt || now,
     updatedAt: report.updatedAt || now,
@@ -113,15 +113,17 @@ export const getUserDomain = (email = "") => String(email || "").split("@")[1]?.
 
 export const canUserViewReport = (report, user) => {
   const mode = report?.visibilityMode || "all";
-  const email = String(user?.email || "").toLowerCase();
-  const domain = getUserDomain(email);
+  const emails = [...new Set([user?.email, ...(Array.isArray(user?.emails) ? user.emails : [])]
+    .map(value => String(value || "").trim().toLowerCase())
+    .filter(value => value.includes("@")))];
+  const domains = emails.map(getUserDomain).filter(Boolean);
 
-  if (isAdmin(email)) return true;
+  if (emails.some(isAdmin)) return true;
   if (report?.status === "draft") return false;
   if (mode === "all") return true;
   if (mode === "admins") return false;
-  if (mode === "emails") return (report.allowedEmails || []).map(e => String(e).toLowerCase()).includes(email);
-  if (mode === "domains") return (report.allowedDomains || []).map(d => String(d).toLowerCase().replace(/^@/, "")).includes(domain);
+  if (mode === "emails") return (report.allowedEmails || []).map(e => String(e).trim().toLowerCase()).some(email => emails.includes(email));
+  if (mode === "domains") return (report.allowedDomains || []).map(d => String(d).trim().toLowerCase().replace(/^@/, "")).some(domain => domains.includes(domain));
   return true;
 };
 

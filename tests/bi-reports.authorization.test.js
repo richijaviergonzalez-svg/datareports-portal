@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHandler } = require("../netlify/functions/bi-reports");
+const { getClaimEmails } = require("../netlify/functions/_auth");
 
 const UUIDS = {
   public: "11111111-1111-4111-8111-111111111111",
@@ -8,6 +9,7 @@ const UUIDS = {
   private: "33333333-3333-4333-8333-333333333333",
   draft: "44444444-4444-4444-8444-444444444444",
   admin: "55555555-5555-4555-8555-555555555555",
+  alias: "66666666-6666-4666-8666-666666666666",
 };
 
 function createStore(reports = []) {
@@ -65,4 +67,47 @@ test("un usuario no administrador no puede modificar el catálogo llamando la fu
   const response = await handler({ httpMethod: "PUT", headers: {}, body: JSON.stringify({ reports: [] }) });
   assert.equal(response.statusCode, 403);
   assert.equal(store.writes, 0);
+});
+
+test("autoriza reportes asignados a un alias firmado de la misma cuenta", async () => {
+  const store = createStore([
+    report(UUIDS.public),
+    report(UUIDS.alias, {
+      visibilityMode: "emails",
+      allowedEmails: ["lorena.caballero@pilarpy.onmicrosoft.com"],
+    }),
+  ]);
+  const handler = createHandler({
+    authenticate: async () => ({
+      ok: true,
+      userEmail: "lorena@pilarpy.onmicrosoft.com",
+      userEmails: [
+        "lorena@pilarpy.onmicrosoft.com",
+        "lorena.caballero@pilarpy.onmicrosoft.com",
+      ],
+      isAdmin: false,
+    }),
+    getReportsStore: () => store,
+  });
+
+  const response = await handler({ httpMethod: "GET", headers: {}, queryStringParameters: {} });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(body.reports.map((item) => item.id).sort(), [UUIDS.alias, UUIDS.public].sort());
+  assert.deepEqual(body.userEmails, [
+    "lorena@pilarpy.onmicrosoft.com",
+    "lorena.caballero@pilarpy.onmicrosoft.com",
+  ]);
+});
+
+test("normaliza los correos alternativos presentes en el token de Microsoft", () => {
+  assert.deepEqual(getClaimEmails({
+    preferred_username: " Lorena@PilarPy.onmicrosoft.com ",
+    upn: "lorena.caballero@pilarpy.onmicrosoft.com",
+    email: "lorena@pilarpy.onmicrosoft.com",
+  }), [
+    "lorena@pilarpy.onmicrosoft.com",
+    "lorena.caballero@pilarpy.onmicrosoft.com",
+  ]);
 });

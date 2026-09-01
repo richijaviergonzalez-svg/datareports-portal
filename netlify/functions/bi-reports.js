@@ -13,10 +13,7 @@ const headers = {
   Vary: "Authorization",
 };
 
-const readHeaders = {
-  ...headers,
-  "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
-};
+const readHeaders = headers;
 
 function json(statusCode, body, responseHeaders = headers) {
   return {
@@ -133,23 +130,29 @@ function normalizeReport(report = {}) {
   };
 }
 
-function canUserSeeReport(report, userEmail, isAdmin) {
+function normalizeIdentityEmails(userEmail, userEmails = []) {
+  return [...new Set([userEmail, ...(Array.isArray(userEmails) ? userEmails : [])]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter((value) => value.includes("@")))];
+}
+
+function canUserSeeReport(report, userEmail, isAdmin, userEmails = []) {
   if (isAdmin) return true;
 
   const normalizedReport = normalizeReport(report);
   if (normalizedReport.status === "draft") return false;
-  const email = String(userEmail || "").trim().toLowerCase();
-  const domain = email.includes("@") ? email.split("@").pop() : "";
+  const identityEmails = normalizeIdentityEmails(userEmail, userEmails);
+  const identityDomains = identityEmails.map((email) => email.split("@").pop());
 
   switch (normalizedReport.visibilityMode) {
     case "admins":
       return false;
 
     case "emails":
-      return normalizedReport.allowedEmails.includes(email);
+      return normalizedReport.allowedEmails.some((email) => identityEmails.includes(email));
 
     case "domains":
-      return normalizedReport.allowedDomains.includes(domain);
+      return normalizedReport.allowedDomains.some((domain) => identityDomains.includes(domain));
 
     case "all":
     default:
@@ -289,13 +292,14 @@ function createHandler(dependencies = {}) {
         : [];
 
       const visibleReports = normalized
-        .filter((report) => canUserSeeReport(report, userEmail, isAdmin))
+        .filter((report) => canUserSeeReport(report, userEmail, isAdmin, auth.userEmails))
         .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 
       return json(200, {
         ok: true,
         source: "netlify-blobs",
         userEmail,
+        userEmails: normalizeIdentityEmails(userEmail, auth.userEmails),
         isAdmin,
         totalReports: normalized.length,
         visibleReports: visibleReports.length,

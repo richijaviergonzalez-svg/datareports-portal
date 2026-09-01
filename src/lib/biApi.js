@@ -26,6 +26,7 @@ async function readJson(response, fallbackMessage) {
 export async function fetchReportsCatalog({ getAccessToken }) {
   const response = await fetch(REPORTS_ENDPOINT, {
     method: "GET",
+    cache: "no-store",
     headers: await buildAuthHeaders(getAccessToken, {
       Accept: "application/json",
     }),
