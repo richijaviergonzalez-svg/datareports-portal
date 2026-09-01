@@ -62,6 +62,41 @@ test("un usuario autenticado recibe solo reportes publicados y autorizados", asy
   assert.match(body.catalogRevision, /^[a-f0-9]{16}$/);
 });
 
+test("reconoce todos los correos guardados juntos en una entrada antigua", async () => {
+  const store = createStore([
+    report(UUIDS.matching, {
+      visibilityMode: "emails",
+      allowedEmails: ["richi.gonzalez@pilarpy.onmicrosoft.com, rocio.caballero@pilarpy.onmicrosoft.com, lorena.caballero@pilarpy.onmicrosoft.com"],
+    }),
+  ]);
+  await store.setJSON(`report-permissions/${UUIDS.matching}.json`, {
+    reportId: UUIDS.matching,
+    visibilityMode: "emails",
+    allowedEmails: ["richi.gonzalez@pilarpy.onmicrosoft.com"],
+    allowedDomains: [],
+    status: "live",
+  });
+  const handler = createHandler({
+    authenticate: async () => ({
+      ok: true,
+      userEmail: "rocio.caballero@pilarpy.onmicrosoft.com",
+      isAdmin: false,
+    }),
+    getReportsStore: () => store,
+  });
+
+  const response = await handler({ httpMethod: "GET", headers: {}, queryStringParameters: {} });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.visibleReports, 1);
+  assert.deepEqual(body.reports[0].allowedEmails, [
+    "richi.gonzalez@pilarpy.onmicrosoft.com",
+    "rocio.caballero@pilarpy.onmicrosoft.com",
+    "lorena.caballero@pilarpy.onmicrosoft.com",
+  ]);
+});
+
 test("el catálogo descarta IDs duplicados y conserva la versión más reciente", async () => {
   const store = createStore([
     report(UUIDS.public, { name: "Nombre anterior", version: "1.0", updatedAt: "2026-08-01T10:00:00.000Z" }),

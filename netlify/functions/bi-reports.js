@@ -51,29 +51,17 @@ function normalizeVisibilityMode(mode) {
 }
 
 function normalizeList(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map(normalizeEmail)
-      .filter(Boolean);
-  }
-
-  return String(value || "")
-    .split(/[;,\n]/)
+  return [...new Set((Array.isArray(value) ? value : [value])
+    .flatMap((item) => String(item || "").split(/[;,\n]/))
     .map((item) => normalizeEmail(item).replace(/^@/, ""))
-    .filter(Boolean);
+    .filter(Boolean))];
 }
 
 function normalizeEmailList(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map(normalizeEmail)
-      .filter(Boolean);
-  }
-
-  return String(value || "")
-    .split(/[;,\n]/)
+  return [...new Set((Array.isArray(value) ? value : [value])
+    .flatMap((item) => String(item || "").split(/[;,\n]/))
     .map(normalizeEmail)
-    .filter(Boolean);
+    .filter(Boolean))];
 }
 
 function normalizeVersionHistory(value) {
@@ -232,6 +220,7 @@ function getReportPermissionKey(reportId) {
 function normalizeReportPermission(report = {}) {
   const normalized = normalizeReport(report);
   return {
+    schemaVersion: 2,
     reportId: normalized.id,
     status: normalized.status,
     visibilityMode: normalized.visibilityMode,
@@ -248,7 +237,7 @@ async function readCatalog(store, sourceReports = null) {
 
   return normalizeCatalog(reports.map((report, index) => {
     const permission = permissions[index];
-    if (!permission || permission.reportId !== report.id) return report;
+    if (!permission || permission.schemaVersion !== 2 || permission.reportId !== report.id) return report;
     return {
       ...report,
       ...normalizeReportPermission({ ...report, ...permission }),
