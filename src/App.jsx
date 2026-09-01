@@ -4,7 +4,6 @@ import "ldrs/react/Hourglass.css";
 import "./styles/motion.css";
 import {
   ALL_CATEGORIES,
-  DEFAULT_REPORTS,
   ICON_OPTIONS,
   canUserViewReport,
   getReportDescription,
@@ -56,6 +55,7 @@ import {
 import {
   createBiAuditEvent,
   createBiRequest,
+  deleteReportCatalogItem,
   fetchBiAuditEvents,
   fetchBiIncidents,
   fetchBiRequests,
@@ -65,10 +65,11 @@ import {
   rollbackReportsCatalog,
   saveBiIncidents,
   saveReportSubscriptions,
+  saveReportCatalogItem,
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
-import { loadPortalState, savePortalState } from "./lib/storage.js";
+import { loadCatalogRecovery, loadPortalState, saveCatalogRecovery, savePortalState } from "./lib/storage.js";
 import {
   getReportTransitionName,
   handlePremiumPointerMove,
@@ -334,7 +335,12 @@ function PowerBIEmbed({ report, dark, preview = false }) {
 
         embeddedReport.on("error", (event) => {
           if (mounted) {
-            setError("Error al cargar el reporte: " + (event?.detail?.message || "Error desconocido"));
+            const powerBiMessage = event?.detail?.message || "Error desconocido";
+            setError(
+              powerBiMessage.includes("PowerBINotAuthorizedException")
+                ? "La tarjeta está visible en DataReports, pero Power BI no concedió acceso a esta cuenta. Verificá el permiso del usuario en el reporte, la aplicación o el workspace de Power BI."
+                : "Error al cargar el reporte: " + powerBiMessage
+            );
             setLoading(false);
           }
         });
@@ -460,7 +466,7 @@ function PowerBIEmbed({ report, dark, preview = false }) {
             <line x1="24" y1="14" x2="24" y2="28" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             <circle cx="24" cy="34" r="2" fill="currentColor" />
           </svg>
-          <p style={{ fontSize: 13, color: "#EF4444", fontWeight: 500 }}>Error al cargar</p>
+          <p style={{ fontSize: 13, color: "#EF4444", fontWeight: 500 }}>{error.includes("Power BI no concedió acceso") ? "Sin permiso en Power BI" : "Error al cargar"}</p>
           <p style={{ fontSize: 11, color: dark ? "#5C6478" : "#9CA3AF", marginTop: 4, maxWidth: 400, textAlign: "center" }}>{error}</p>
           <button onClick={handleRetry} style={{ marginTop: 16, padding: "8px 24px", borderRadius: 12, border: `1px solid ${dark ? "#2A2F3C" : "#E5E7EB"}`, background: dark ? "#1E222D" : "#FFFFFF", color: "#0D9488", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
             Reintentar
@@ -576,7 +582,116 @@ function LoginScreen({ onLogin }) {
 // ========================
 // ADMIN PANEL
 // ========================
-function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
+const extractEmailTokens = (value) => {
+  const normalized = String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g, " ")
+    .toLowerCase();
+  return [...new Set(normalized.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || [])];
+};
+
+const getEmailLabel = (email) => {
+  const localPart = String(email || "").split("@")[0];
+  const words = localPart.split(/[._-]+/).filter(Boolean);
+  return words.map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ") || email;
+};
+
+function EmailPeoplePicker({ value = [], onChange, theme }) {
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState("");
+  const emails = Array.isArray(value) ? value : extractEmailTokens(value);
+  const avatarColors = ["#2563EB", "#0891B2", "#059669", "#7C3AED", "#DB2777", "#EA580C"];
+
+  const commit = (rawValue) => {
+    const raw = String(rawValue || "").trim();
+    if (!raw) return true;
+    const candidates = extractEmailTokens(raw);
+    if (!candidates.length) {
+      setError("Correo no válido");
+      return false;
+    }
+    onChange([...new Set([...emails, ...candidates])]);
+    setDraft("");
+    setError("");
+    return true;
+  };
+
+  const removeEmail = (email) => {
+    onChange(emails.filter(item => item !== email));
+    setError("");
+  };
+
+  return (
+    <div>
+      <div style={{
+        minHeight: 48,
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 7,
+        padding: 7,
+        borderRadius: 10,
+        border: `1px solid ${error ? "#EF4444" : theme.border}`,
+        background: theme.bgSurface,
+      }}>
+        {emails.map((email) => {
+          const label = getEmailLabel(email);
+          const colorIndex = [...email].reduce((total, character) => total + character.charCodeAt(0), 0) % avatarColors.length;
+          const initials = label.split(" ").map(word => word[0]).join("").slice(0, 2).toUpperCase();
+          return (
+            <span key={email} title={email} style={{
+              height: 32,
+              maxWidth: "100%",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+              padding: "3px 5px 3px 3px",
+              borderRadius: 8,
+              border: `1px solid ${theme.border}`,
+              background: theme.bgCard,
+              color: theme.text,
+            }}>
+              <span aria-hidden="true" style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", background: avatarColors[colorIndex], color: "white", fontSize: 9, fontWeight: 700 }}>{initials}</span>
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11 }}>
+                <strong style={{ fontWeight: 600 }}>{label}</strong>
+                <span style={{ color: theme.textMuted }}> ({email.split("@")[1]})</span>
+              </span>
+              <button type="button" onClick={() => removeEmail(email)} aria-label={`Quitar ${email}`} title={`Quitar ${email}`} style={{ width: 22, height: 22, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: "50%", background: "transparent", color: theme.textMuted, cursor: "pointer", fontSize: 17, lineHeight: 1 }}>×</button>
+            </span>
+          );
+        })}
+        <input
+          type="email"
+          value={draft}
+          onChange={event => { setDraft(event.target.value); setError(""); }}
+          onBlur={() => commit(draft)}
+          onPaste={event => {
+            const pasted = event.clipboardData.getData("text");
+            if (extractEmailTokens(pasted).length) {
+              event.preventDefault();
+              commit(pasted);
+            }
+          }}
+          onKeyDown={event => {
+            if (["Enter", "Tab", ",", ";"].includes(event.key) && draft.trim()) {
+              event.preventDefault();
+              commit(draft);
+            } else if (event.key === "Backspace" && !draft && emails.length) {
+              removeEmail(emails[emails.length - 1]);
+            }
+          }}
+          placeholder={emails.length ? "Agregar usuario" : "usuario@empresa.com"}
+          aria-label="Agregar usuario permitido"
+          aria-invalid={Boolean(error)}
+          style={{ flex: "1 1 190px", minWidth: 150, height: 30, border: "none", outline: "none", background: "transparent", color: theme.text, fontSize: 11, fontFamily: "'Outfit', system-ui" }}
+        />
+      </div>
+      <div aria-live="polite" style={{ minHeight: 16, paddingTop: 4, color: "#EF4444", fontSize: 10 }}>{error}</div>
+    </div>
+  );
+}
+
+function AdminPanel({ reports, recoveryReports = [], onRecoverLocal, onSave, onClose, onLoadHistory, onRollback, onPreviewUser, permissionPreviewResult, dark, reportSyncStatus = "local", reportSyncMessage = "Catálogo local", currentUser, standalone = false }) {
   const theme = dark ? darkTheme : lightTheme;
   const [list, setList] = useState(normalizeReports(reports));
   const [editing, setEditing] = useState(null);
@@ -587,7 +702,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
     owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service",
     refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "",
     version: "", releaseNotes: "", releasedAt: "", versionHistory: [],
-    visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "",
+    visibilityMode: "all", allowedEmails: [], allowedDomains: "", visibilityNote: "",
   });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [successMsg, setSuccessMsg] = useState("");
@@ -596,23 +711,41 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [catalogSearch, setCatalogSearch] = useState("");
-  const [previewEmail, setPreviewEmail] = useState("");
+  const [previewEmail, setPreviewEmail] = useState(permissionPreviewResult?.previewEmail || "");
   const [historyEntries, setHistoryEntries] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const editorScrollRef = useRef(null);
+
+  useEffect(() => {
+    if (editing || saving) return;
+    setList(normalizeReports(reports));
+  }, [reports, editing, saving]);
 
   useEffect(() => setList(normalizeReports(reports)), [reports]);
 
   const showSuccess = (msg) => { setSuccessMsg(msg); setErrorMsg(""); setTimeout(() => setSuccessMsg(""), 2800); };
   const showError = (msg) => { setErrorMsg(msg); setSuccessMsg(""); setTimeout(() => setErrorMsg(""), 4200); };
+  const handlePermissionPreview = async () => {
+    const email = previewEmail.trim();
+    if (!email || previewLoading) return;
+    setPreviewLoading(true);
+    try {
+      await onPreviewUser?.(email);
+    } catch (error) {
+      showError(error.message || "No se pudo verificar la vista de permisos.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   const resetForm = () => {
     setEditing(null);
     setUrlInput("");
     setParsed(null);
     setTestResult(null);
-    setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", version: "", releaseNotes: "", releasedAt: "", versionHistory: [], visibilityMode: "all", allowedEmails: "", allowedDomains: "", visibilityNote: "" });
+    setForm({ id: "", groupId: "", name: "", category: "Comercial", icon: "chart-bar", description: "", status: "live", owner: "Equipo BI", audience: "Corporativo", accessLevel: "Corporativo", dataSource: "Power BI Service", refreshFrequency: "Según dataset", criticality: "media", technicalNotes: "", originalUrl: "", sortOrder: "", version: "", releaseNotes: "", releasedAt: "", versionHistory: [], visibilityMode: "all", allowedEmails: [], allowedDomains: "", visibilityNote: "" });
     requestAnimationFrame(() => editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
   };
 
@@ -631,7 +764,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
     if (form.version && !/^[a-z0-9][a-z0-9._-]{0,19}$/i.test(form.version.trim())) return "La versión debe usar letras, números, puntos o guiones (máximo 20 caracteres).";
     if (form.releaseNotes.trim() && !form.version.trim()) return "Indicá una versión para publicar las notas de cambios.";
     if (list.some(r => r.id === form.id && r.id !== editing)) return "Ya existe un reporte configurado con ese Report ID.";
-    if (form.visibilityMode === "emails" && !form.allowedEmails.trim()) return "Para visibilidad por usuarios específicos, cargá al menos un correo.";
+    if (form.visibilityMode === "emails" && (!Array.isArray(form.allowedEmails) || form.allowedEmails.length === 0)) return "Para visibilidad por usuarios específicos, cargá al menos un correo.";
     if (form.visibilityMode === "domains" && !form.allowedDomains.trim()) return "Para visibilidad por dominio, cargá al menos un dominio.";
     return "";
   };
@@ -734,7 +867,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
       releasedAt: r.releasedAt || "",
       versionHistory: normalizeVersionHistory(r.versionHistory),
       visibilityMode: r.visibilityMode || "all",
-      allowedEmails: (r.allowedEmails || []).join(", "),
+      allowedEmails: [...(r.allowedEmails || [])],
       allowedDomains: (r.allowedDomains || []).join(", "),
       visibilityNote: r.visibilityNote || "",
     });
@@ -814,17 +947,50 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
     }
   };
 
+  const catalogSignature = (items) => JSON.stringify(normalizeReports(items).map((report) => ({
+    id: report.id,
+    groupId: report.groupId,
+    name: report.name,
+    version: report.version,
+    status: report.status,
+    visibilityMode: report.visibilityMode,
+    allowedEmails: report.allowedEmails,
+    allowedDomains: report.allowedDomains,
+  })));
+  const recoveryDiffers = recoveryReports.length > 0 && catalogSignature(recoveryReports) !== catalogSignature(reports);
+
+  const recoverLocalCatalog = async () => {
+    if (!onRecoverLocal || saving) return;
+    if (!window.confirm(`La copia local contiene ${recoveryReports.length} reportes y reemplazará el catálogo central actual de ${reports.length}. ¿Continuar?`)) return;
+    setSaving(true);
+    try {
+      const result = await onRecoverLocal();
+      if (result?.ok === false) throw new Error(result.error || "No se pudo recuperar la copia local.");
+      const recovered = normalizeReports(result?.reports || recoveryReports);
+      setList(recovered);
+      resetForm();
+      showSuccess(`Copia local publicada: ${recovered.length} reportes`);
+    } catch (error) {
+      showError(error.message || "No se pudo recuperar la copia local.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.text, fontSize: 13, fontFamily: "'Outfit', system-ui", outline: "none" };
   const selectStyle = { ...inputStyle, cursor: "pointer", appearance: "none", WebkitAppearance: "none" };
   const mutedLabel = { fontSize: 10, color: theme.textMuted, marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: .8, fontWeight: 500 };
   const visibleCatalog = list.filter(report => {
     const query = catalogSearch.trim().toLowerCase();
     if (!query) return true;
-    return [report.name, report.category, report.owner, report.version].some(value => String(value || "").toLowerCase().includes(query));
+    return [report.name, report.category, report.owner, report.version, report.id, report.groupId, report.visibilityMode].some(value => String(value || "").toLowerCase().includes(query));
   });
-  const previewVisibleReports = previewEmail.trim()
-    ? list.filter((report) => canUserViewReport(report, { email: previewEmail.trim() }))
-    : [];
+  const normalizedPreviewEmail = previewEmail.trim().toLowerCase();
+  const activePreviewResult = permissionPreviewResult?.previewEmail === normalizedPreviewEmail
+    ? permissionPreviewResult
+    : null;
+  const previewMismatches = (activePreviewResult?.permissionDiagnostics || [])
+    .filter((item) => !item.visible);
 
   return (
     <div style={standalone ? { position: "relative", width: "100%" } : { position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", padding: 16 }}>
@@ -839,6 +1005,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
               {reportSyncMessage}
             </span>
             <button onClick={openHistory} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 12px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgSurface, color: theme.textSecondary, cursor: saving ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }} title="Consultar versiones anteriores del catálogo">Historial</button>
+            {recoveryDiffers && <button onClick={recoverLocalCatalog} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 12px", borderRadius: 10, border: `1px solid ${dark ? "#F59E0B55" : "#FDE68A"}`, background: dark ? "#F59E0B14" : "#FFFBEB", color: dark ? "#FCD34D" : "#92400E", cursor: saving ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }} title="Publicar la copia local conservada antes de sincronizar">Recuperar copia local ({recoveryReports.length})</button>}
             <button onClick={resetForm} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 13px", borderRadius: 10, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, cursor: saving ? "wait" : "pointer", fontSize: 12, fontWeight: 700 }}>
               <svg width="14" height="14" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
               Nuevo reporte
@@ -870,6 +1037,15 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
               {editing ? "Editar reporte" : "Agregar nuevo reporte"}
             </h3>
             <p style={{ fontSize: 11, color: theme.textMuted, marginBottom: 20 }}>{editing ? "Los cambios se publican en el catálogo compartido al guardar." : "Completá la información para incorporar un tablero al catálogo."}</p>
+
+            {editing && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", margin: "-10px 0 18px", padding: "9px 11px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textMuted, fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+                <span><strong style={{ color: theme.text }}>Reporte:</strong> {form.name || "Sin nombre"}</span>
+                <span><strong style={{ color: theme.text }}>Categoría:</strong> {form.category}</span>
+                <span><strong style={{ color: theme.text }}>Report ID:</strong> …{form.id.slice(-8)}</span>
+                <span><strong style={{ color: theme.text }}>Workspace:</strong> {form.groupId ? `…${form.groupId.slice(-8)}` : "My Workspace"}</span>
+              </div>
+            )}
 
             <div style={{ marginBottom: 16 }}>
               <label style={mutedLabel}>Paso 1 — URL del reporte de Power BI</label>
@@ -943,6 +1119,11 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
                     <option value="emails">Usuarios específicos por correo</option>
                     <option value="domains">Dominios específicos</option>
                   </select>
+                  {form.visibilityMode === "all" && (
+                    <p style={{ marginTop: 7, padding: "8px 9px", borderRadius: 8, color: dark ? "#FCD34D" : "#92400E", background: dark ? "#F59E0B14" : "#FFFBEB", border: `1px solid ${dark ? "#F59E0B33" : "#FDE68A"}`, fontSize: 10, lineHeight: 1.4 }}>
+                      La tarjeta será visible para todos los usuarios autenticados. Esto no concede acceso al reporte dentro de Power BI.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label style={mutedLabel}>Nota de visibilidad</label>
@@ -952,7 +1133,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
               {form.visibilityMode === "emails" && (
                 <div style={{ marginBottom: 12 }}>
                   <label style={mutedLabel}>Correos permitidos</label>
-                  <textarea value={form.allowedEmails} onChange={e => setForm({ ...form, allowedEmails: e.target.value })} placeholder="usuario1@empresa.com, usuario2@empresa.com" style={{ ...inputStyle, minHeight: 58, resize: "vertical", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}/>
+                  <EmailPeoplePicker value={form.allowedEmails} onChange={allowedEmails => setForm(current => ({ ...current, allowedEmails }))} theme={theme}/>
                 </div>
               )}
               {form.visibilityMode === "domains" && (
@@ -1027,9 +1208,31 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
                 <label style={{ ...mutedLabel, marginBottom: 6 }}>Vista previa de permisos</label>
                 <div style={{ display: "flex", gap: 6 }}>
                   <input type="email" value={previewEmail} onChange={e => setPreviewEmail(e.target.value)} placeholder="usuario@empresa.com" style={{ ...inputStyle, minWidth: 0, padding: "8px 9px", fontSize: 10 }}/>
-                  <button onClick={() => previewEmail.trim() && onPreviewUser?.(previewEmail.trim())} disabled={!previewEmail.trim()} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 9, padding: "0 9px", cursor: previewEmail.trim() ? "pointer" : "not-allowed", fontSize: 10, fontWeight: 700 }}>Ver como</button>
+                  <button onClick={handlePermissionPreview} disabled={!previewEmail.trim() || previewLoading} style={{ border: `1px solid ${T.teal}44`, background: dark ? T.teal + "12" : T.tealBg, color: T.teal, borderRadius: 9, padding: "0 9px", cursor: previewEmail.trim() && !previewLoading ? "pointer" : "not-allowed", fontSize: 10, fontWeight: 700 }}>{previewLoading ? "Verificando..." : "Ver como"}</button>
                 </div>
-                {previewEmail.trim() && <p style={{ marginTop: 7, fontSize: 10, color: theme.textMuted }}><strong style={{ color: theme.text }}>{previewVisibleReports.length}</strong> de {list.length} reportes visibles</p>}
+                {activePreviewResult && (
+                  <div style={{ marginTop: 8, fontSize: 10, color: theme.textMuted }}>
+                    <p><strong style={{ color: theme.text }}>{activePreviewResult.visibleReports}</strong> de {activePreviewResult.totalReports} reportes autorizados por el catálogo publicado</p>
+                    {previewMismatches.length > 0 && (
+                      <details style={{ marginTop: 7 }}>
+                        <summary style={{ cursor: "pointer", color: T.teal, fontWeight: 700 }}>Ver {previewMismatches.length} exclusiones</summary>
+                        <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 6, maxHeight: 190, overflowY: "auto" }}>
+                          {previewMismatches.map((item) => (
+                            <div key={item.id} style={{ padding: "7px 8px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgCard }}>
+                              <strong style={{ display: "block", color: theme.text, lineHeight: 1.25 }}>{item.name}</strong>
+                              <span style={{ display: "block", marginTop: 3 }}>
+                                {item.reason === "email-mismatch" && `Asignado a: ${(item.allowedEmails || []).join(", ") || "sin correos"}`}
+                                {item.reason === "domain-mismatch" && `Dominios: ${(item.allowedDomains || []).join(", ") || "sin dominios"}`}
+                                {item.reason === "draft" && "El reporte está en borrador"}
+                                {item.reason === "admins-only" && "Visible solo para administradores"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1051,6 +1254,12 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
                       <span style={{ fontSize: 9, color: dark ? colors.darkText : colors.accent, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.category}</span>
                       <span style={{ width: 3, height: 3, borderRadius: 99, background: theme.textMuted }}/>
                       <span style={{ fontSize: 9, color: report.status === "live" ? "#10B981" : report.status === "draft" ? "#F59E0B" : "#EF4444" }}>{statusConfig[report.status]?.label || "Activo"}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 4, minWidth: 0, color: theme.textMuted, fontSize: 8.5, fontFamily: "'JetBrains Mono', monospace" }}>
+                      <span title={report.id}>ID …{report.id.slice(-8)}</span>
+                      <span style={{ color: report.visibilityMode === "all" ? "#D97706" : T.teal }}>
+                        {report.visibilityMode === "all" ? "Todos" : report.visibilityMode === "admins" ? "Solo admin" : report.visibilityMode === "emails" ? "Por correo" : "Por dominio"}
+                      </span>
                     </div>
                   </div>
                   <button onClick={(e) => { e.stopPropagation(); handleEdit(report); }} title="Editar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -2209,7 +2418,7 @@ function MetricsPanel({ dark, reports, recentViews, favorites }) {
 // ========================
 function Dashboard({ user, onLogout }) {
   const [dark, setDark] = useState(false);
-  const [reports, setReports] = useState(DEFAULT_REPORTS);
+  const [reports, setReports] = useState([]);
   const [activeCategory, setActiveCategory] = useState("Todos");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedReport, setSelectedReport] = useState(null);
@@ -2233,6 +2442,12 @@ function Dashboard({ user, onLogout }) {
   const [notifications, setNotifications] = useState([]);
   const [subscriptions, setSubscriptions] = useState([]);
   const [previewUserEmail, setPreviewUserEmail] = useState("");
+  const [previewCatalogReports, setPreviewCatalogReports] = useState(null);
+  const [permissionPreviewResult, setPermissionPreviewResult] = useState(null);
+  const [catalogDiagnostics, setCatalogDiagnostics] = useState(null);
+  const [catalogReady, setCatalogReady] = useState(false);
+  const [localCatalogRecovery, setLocalCatalogRecovery] = useState([]);
+  const [catalogIdentityEmails, setCatalogIdentityEmails] = useState(() => [String(user?.email || "").trim().toLowerCase()].filter(Boolean));
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
   const [incidents, setIncidents] = useState([]);
@@ -2459,7 +2674,7 @@ function Dashboard({ user, onLogout }) {
 
   useEffect(() => {
     const savedState = loadPortalState();
-    if (savedState.reports?.length) setReports(normalizeReports(savedState.reports));
+    if (isAdmin(user?.email)) setLocalCatalogRecovery(normalizeReports(loadCatalogRecovery()));
     if (savedState.favorites) setFavorites(savedState.favorites);
     if (savedState.recentViews) setRecentViews(savedState.recentViews);
     if (savedState.notifications) setNotifications(savedState.notifications);
@@ -2536,24 +2751,22 @@ function Dashboard({ user, onLogout }) {
     try {
       const data = await fetchReportsCatalog({ getAccessToken });
       if (!Array.isArray(data.reports)) throw new Error("invalid-shared-reports-response");
+      setCatalogDiagnostics({
+        runtime: data.runtime || "sin-runtime",
+        catalogRevision: data.catalogRevision || "sin-revision",
+        visibleReports: data.visibleReports,
+        totalReports: data.totalReports,
+        catalogDuplicatesRemoved: data.catalogDuplicatesRemoved || 0,
+        evaluatedEmails: Array.isArray(data.evaluatedEmails) ? data.evaluatedEmails : [],
+        authorizationSummary: data.authorizationSummary || {},
+      });
+      const verifiedEmails = (Array.isArray(data.userEmails) ? data.userEmails : [data.userEmail])
+        .map(value => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (verifiedEmails.length) setCatalogIdentityEmails(verifiedEmails);
 
-      // Netlify Blobs es la fuente oficial. Si el admin eliminó reportes, también debe verse vacío.
+      // Netlify Blobs es la única fuente autorizada para mostrar el catálogo.
       const sharedReports = normalizeReports(data.reports);
-      if (sharedReports.length === 0) {
-        const recoveryReports = normalizeReports([
-          ...reports,
-          ...recentViews,
-          ...DEFAULT_REPORTS,
-        ]);
-
-        if (recoveryReports.length > 0) {
-          setReports(recoveryReports);
-          saveAll(recoveryReports, favorites, recentViews, notifications, requests);
-          setReportSyncStatus("local");
-          setReportSyncMessage("Catálogo compartido vacío; usando respaldo local");
-          return;
-        }
-      }
 
       const subscribedUpdates = sharedReports.filter((nextReport) => {
         if (!subscriptions.includes(nextReport.id) || !nextReport.version) return false;
@@ -2573,9 +2786,12 @@ function Dashboard({ user, onLogout }) {
 
       setReportSyncStatus("shared");
       setReportSyncMessage(sharedReports.length ? "Catálogo sincronizado" : "Catálogo sincronizado: sin reportes");
+      setCatalogReady(true);
     } catch (e) {
+      sharedSyncRef.current.reports = 0;
       setReportSyncStatus("local");
-      setReportSyncMessage("Catálogo local: pendiente conectar bi-reports");
+      setReportSyncMessage("Catálogo no disponible");
+      setCatalogReady(true);
     }
   }, [reports, favorites, recentViews, notifications, requests, subscriptions, saveAll, shouldSyncShared]);
 
@@ -2602,35 +2818,79 @@ function Dashboard({ user, onLogout }) {
 
   const pushSharedReports = async (newReports) => {
     const cleanReports = normalizeReports(newReports);
+    const previousReports = normalizeReports(reports);
+    const previousById = new Map(previousReports.map(report => [report.id, report]));
+    const nextById = new Map(cleanReports.map(report => [report.id, report]));
+    const addedReports = cleanReports.filter(report => !previousById.has(report.id));
+    const removedReports = previousReports.filter(report => !nextById.has(report.id));
+    const changedReports = cleanReports.filter(report => {
+      const previous = previousById.get(report.id);
+      return previous && JSON.stringify(previous) !== JSON.stringify(report);
+    });
 
     // Actualización optimista: el cambio se ve en pantalla de inmediato.
     setReports(cleanReports);
     saveAll(cleanReports, favorites, recentViews, notifications, requests);
 
     try {
-      const data = await saveReportsCatalog({
-        getAccessToken,
-        reports: cleanReports,
-        user: { name: user?.name, email: user?.email },
-      });
-      const syncedReports = normalizeReports(data.reports || cleanReports);
+      let data;
+      let expectedReport = null;
+
+      if (addedReports.length === 1 && removedReports.length === 0 && changedReports.length === 0) {
+        expectedReport = addedReports[0];
+        data = await saveReportCatalogItem({ getAccessToken, report: expectedReport, create: true });
+      } else if (addedReports.length === 0 && removedReports.length === 1 && changedReports.length === 0) {
+        data = await deleteReportCatalogItem({ getAccessToken, reportId: removedReports[0].id });
+      } else if (addedReports.length === 0 && removedReports.length === 0 && changedReports.length === 1) {
+        expectedReport = changedReports[0];
+        data = await saveReportCatalogItem({ getAccessToken, report: expectedReport });
+      } else if (addedReports.length === 1 && removedReports.length === 1 && changedReports.length === 0) {
+        expectedReport = addedReports[0];
+        data = await saveReportCatalogItem({
+          getAccessToken,
+          report: expectedReport,
+          previousId: removedReports[0].id,
+        });
+      } else {
+        data = await saveReportsCatalog({
+          getAccessToken,
+          reports: cleanReports,
+          user: { name: user?.name, email: user?.email },
+        });
+      }
+
+      const confirmation = await fetchReportsCatalog({ getAccessToken });
+      if (data.catalogRevision && confirmation.catalogRevision !== data.catalogRevision) {
+        throw new Error("El catálogo cambió durante la verificación. Volvé a intentar el guardado.");
+      }
+
+      const syncedReports = normalizeReports(confirmation.reports || data.reports || cleanReports);
+      if (expectedReport) {
+        const persistedReport = syncedReports.find(report => report.id === expectedReport.id);
+        const expectedEmails = normalizeReport(expectedReport).allowedEmails;
+        const persistedEmails = normalizeReport(persistedReport).allowedEmails;
+        if (!persistedReport || JSON.stringify(persistedEmails) !== JSON.stringify(expectedEmails)) {
+          throw new Error("El catálogo no confirmó los correos permitidos del reporte.");
+        }
+      }
 
       setReports(syncedReports);
       saveAll(syncedReports, favorites, recentViews, notifications, requests);
+      saveCatalogRecovery(syncedReports);
+      setLocalCatalogRecovery(syncedReports);
       sharedSyncRef.current.reports = Date.now();
       setReportSyncStatus("shared");
       setReportSyncMessage("Catálogo sincronizado");
       return { ok: true, synced: true, reports: syncedReports };
     } catch (e) {
-      const localReports = normalizeReports(newReports);
-      setReports(localReports);
-      saveAll(localReports, favorites, recentViews, notifications, requests);
+      setReports(previousReports);
+      saveAll(previousReports, favorites, recentViews, notifications, requests);
       setReportSyncStatus("local");
-      setReportSyncMessage(e.message || "Cambios guardados localmente");
+      setReportSyncMessage(`No publicado: ${e.message || "no se pudo sincronizar el catálogo central"}`);
       return {
         ok: false,
         synced: false,
-        reports: localReports,
+        reports: previousReports,
         error: e.message || "No se pudo sincronizar el catálogo central",
       };
     }
@@ -2651,10 +2911,11 @@ function Dashboard({ user, onLogout }) {
         ...versionUpdates.map(r => ({ id: Date.now() + Math.random(), type: "update", message: `${r.name} actualizado a v${r.version}`, time: new Date().toISOString(), reportId: r.id, read: false })),
         ...notifications,
       ].slice(0, 20);
-      setNotifications(updatedNotifs);
     }
     const result = await pushSharedReports(cleanReports);
     const finalReports = normalizeReports(result.reports || cleanReports);
+    const finalNotifications = result.ok ? updatedNotifs : notifications;
+    if (result.ok && finalNotifications !== notifications) setNotifications(finalNotifications);
 
     // Mantener sincronizados los paneles abiertos sin obligar a recargar la página.
     if (selectedReport) {
@@ -2667,9 +2928,11 @@ function Dashboard({ user, onLogout }) {
       if (updatedDetail) setDetailReport(updatedDetail);
     }
 
-    saveAll(finalReports, favorites, recentViews, updatedNotifs, requests);
+    saveAll(finalReports, favorites, recentViews, finalNotifications, requests);
     return { ...result, reports: finalReports };
   };
+
+  const recoverLocalCatalog = () => saveReports(localCatalogRecovery);
 
   const loadReportsHistory = () => fetchReportsHistory({ getAccessToken });
 
@@ -3057,8 +3320,23 @@ function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener("keydown", handler);
   }, [navigateToView, openAdminPanel, user.email]);
 
-  const effectiveCatalogUser = previewUserEmail && isAdmin(user.email) ? { ...user, email: previewUserEmail } : user;
-  const userVisibleReports = reports.filter(r => canUserViewReport(r, effectiveCatalogUser));
+  const effectiveCatalogUser = previewUserEmail && isAdmin(user.email)
+    ? { ...user, email: previewUserEmail, emails: [previewUserEmail] }
+    : { ...user, email: catalogIdentityEmails[0] || user.email, emails: catalogIdentityEmails };
+  const catalogForCurrentView = previewUserEmail && isAdmin(user.email) && Array.isArray(previewCatalogReports)
+    ? previewCatalogReports
+    : reports;
+  const catalogAlreadyAuthorized = Boolean(
+    (previewUserEmail && isAdmin(user.email) && Array.isArray(previewCatalogReports)) ||
+    (!isAdmin(user.email) && catalogDiagnostics)
+  );
+  const userVisibleReports = catalogAlreadyAuthorized
+    ? catalogForCurrentView
+    : catalogForCurrentView.filter(r => canUserViewReport(r, effectiveCatalogUser));
+  const showPreviewDiagnostics = window.location.hostname.startsWith("deploy-preview-22--");
+  const activeCatalogDiagnostics = previewUserEmail && permissionPreviewResult
+    ? permissionPreviewResult
+    : catalogDiagnostics;
   const categories = ["Todos", ...new Set(userVisibleReports.map(r => r.category))];
   let filtered = userVisibleReports.filter(r => {
     const matchCat = activeCategory === "Todos" || r.category === activeCategory;
@@ -3076,6 +3354,15 @@ function Dashboard({ user, onLogout }) {
   const displayReports = activeView === "favorites" ? filtered.filter(r => favorites.includes(r.id))
     : activeView === "recent" ? recentViews.filter(r => userVisibleReports.some(rr => rr.id === r.id))
     : filtered;
+  const hasActiveCatalogFilters = Boolean(
+    searchQuery.trim() || activeCategory !== "Todos" || statusFilter !== "all"
+  );
+  const emptyCatalogTitle = previewUserEmail && isAdmin(user.email)
+    ? "Este usuario no tiene reportes disponibles"
+    : "No tenés reportes disponibles";
+  const emptyCatalogDescription = previewUserEmail && isAdmin(user.email)
+    ? "No hay reportes publicados y asignados a esta cuenta"
+    : "No hay reportes publicados y asignados a tu cuenta";
 
   const requestStatusLabels = REQUEST_STATUS_LABELS;
   const requestPriorityLabels = REQUEST_PRIORITY_LABELS;
@@ -3782,16 +4069,28 @@ function Dashboard({ user, onLogout }) {
         </div>
 
         <div key={activeView} className="motion-page" style={{ padding: "24px 28px" }}>
+          {showPreviewDiagnostics && activeCatalogDiagnostics && (
+            <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 10, border: `1px dashed ${theme.border}`, background: theme.bgSurface, color: theme.textMuted, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
+              <span>runtime: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.runtime}</strong></span>
+              <span>revision: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.catalogRevision}</strong></span>
+              <span>API visibles: <strong style={{ color: theme.text }}>{activeCatalogDiagnostics.visibleReports ?? "?"}/{activeCatalogDiagnostics.totalReports ?? "?"}</strong></span>
+              <span>identidad: <strong style={{ color: theme.text }}>{(activeCatalogDiagnostics.evaluatedEmails || []).join(" | ") || "sin correo"}</strong></span>
+              <span>decisiones: <strong style={{ color: theme.text }}>{Object.entries(activeCatalogDiagnostics.authorizationSummary || {}).map(([reason, count]) => `${reason}:${count}`).join(" | ") || "sin datos"}</strong></span>
+              {activeCatalogDiagnostics.catalogDuplicatesRemoved > 0 && <span style={{ color: "#D97706" }}>duplicados saneados: <strong>{activeCatalogDiagnostics.catalogDuplicatesRemoved}</strong></span>}
+            </div>
+          )}
           {previewUserEmail && isAdmin(user.email) && activeView !== "admin" && (
             <div style={{ marginBottom: 14, padding: "11px 14px", borderRadius: 12, border: `1px solid ${T.teal}44`, background: dark ? T.teal + "10" : T.tealBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div><strong style={{ color: theme.text, fontSize: 12 }}>Vista de permisos</strong><span style={{ color: theme.textMuted, fontSize: 11 }}> · Estás viendo el catálogo disponible para {previewUserEmail}</span></div>
-              <button onClick={() => setPreviewUserEmail("")} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgCard, color: T.teal, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Salir de la vista</button>
+              <button onClick={() => { setPreviewUserEmail(""); setPreviewCatalogReports(null); }} style={{ padding: "7px 10px", borderRadius: 9, border: `1px solid ${theme.border}`, background: theme.bgCard, color: T.teal, cursor: "pointer", fontSize: 10, fontWeight: 700 }}>Salir de la vista</button>
             </div>
           )}
 
-          {activeView === "admin" && isAdmin(user.email) && (
-            <AdminPanel reports={reports} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={(email) => { setPreviewUserEmail(email); navigateToView("dashboard"); }} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
-          )}
+          {activeView === "admin" && isAdmin(user.email) && (catalogReady ? (
+            <AdminPanel reports={reports} recoveryReports={localCatalogRecovery} onRecoverLocal={recoverLocalCatalog} onSave={saveReports} onClose={() => closeAdminPanel()} onLoadHistory={loadReportsHistory} onRollback={rollbackReports} onPreviewUser={async (email) => { const data = await fetchReportsCatalog({ getAccessToken, previewEmail: email }); if (!Array.isArray(data.reports)) throw new Error("Respuesta inválida al verificar permisos."); setPermissionPreviewResult(data); setPreviewCatalogReports(normalizeReports(data.reports)); setPreviewUserEmail(data.previewEmail || email); navigateToView("dashboard"); return data; }} permissionPreviewResult={permissionPreviewResult} dark={dark} reportSyncStatus={reportSyncStatus} reportSyncMessage={reportSyncMessage} currentUser={user} standalone/>
+          ) : (
+            <div style={{ minHeight: 320, display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, fontSize: 12 }}>Sincronizando catálogo central...</div>
+          ))}
           {/* Welcome and incident calendar - only on dashboard view */}
           {activeView === "dashboard" && (
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "stretch" }} className="metrics-grid">
@@ -4234,12 +4533,12 @@ function Dashboard({ user, onLogout }) {
             <div style={{ textAlign: "center", padding: 60, animation: "fadeUp .4s ease-out" }}>
               <svg width="56" height="56" viewBox="0 0 48 48" style={{ color: theme.border, marginBottom: 16 }}><circle cx="20" cy="20" r="14" stroke="currentColor" strokeWidth="2" fill="none"/><line x1="30" y1="30" x2="40" y2="40" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               <p style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>
-                {activeView === "favorites" ? "No tenés favoritos aún" : activeView === "recent" ? "No hay reportes recientes" : "No encontramos reportes con estos filtros"}
+                {activeView === "favorites" ? "No tenés favoritos aún" : activeView === "recent" ? "No hay reportes recientes" : hasActiveCatalogFilters ? "No encontramos reportes con estos filtros" : emptyCatalogTitle}
               </p>
               <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 6, maxWidth: 360, margin: "6px auto 0" }}>
-                {activeView === "favorites" ? "Marcá reportes con la estrella ⭐ para acceso rápido" : activeView === "recent" ? "Los reportes que abras aparecerán acá" : "Intentá cambiar los filtros de categoría, estado o término de búsqueda"}
+                {activeView === "favorites" ? "Marcá reportes con la estrella ⭐ para acceso rápido" : activeView === "recent" ? "Los reportes que abras aparecerán acá" : hasActiveCatalogFilters ? "Intentá cambiar los filtros de categoría, estado o término de búsqueda" : emptyCatalogDescription}
               </p>
-              {searchQuery && (
+              {activeView === "dashboard" && hasActiveCatalogFilters && (
                 <button onClick={() => { setSearchQuery(""); setActiveCategory("Todos"); setStatusFilter("all"); }} style={{ marginTop: 16, padding: "8px 20px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, color: T.teal, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
                   Limpiar filtros
                 </button>

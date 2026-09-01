@@ -106,16 +106,29 @@ function verifySignature(jwt, jwk) {
   return verifier.verify(publicKey, base64UrlToBuffer(jwt.signature));
 }
 
-function getClaimEmail(payload) {
-  return String(
-    payload.preferred_username ||
-      payload.upn ||
-      payload.email ||
-      payload.unique_name ||
-      ""
-  )
-    .trim()
+function normalizeEmail(value) {
+  const cleaned = String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/\s+/g, "")
+    .replace(/[^\x21-\x7E]/g, "")
     .toLowerCase();
+  return cleaned.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)?.[0] || cleaned;
+}
+
+function getClaimEmails(payload = {}) {
+  return [
+    payload.preferred_username,
+    payload.upn,
+    payload.email,
+    payload.unique_name,
+  ]
+    .map(normalizeEmail)
+    .filter((value, index, values) => value.includes("@") && values.indexOf(value) === index);
+}
+
+function getClaimEmail(payload) {
+  return getClaimEmails(payload)[0] || "";
 }
 
 function validateClaims(payload) {
@@ -174,11 +187,13 @@ async function authenticate(event) {
     }
 
     const userEmail = validateClaims(jwt.payload);
+    const userEmails = getClaimEmails(jwt.payload);
 
     return {
       ok: true,
       claims: jwt.payload,
       userEmail,
+      userEmails,
       userName: jwt.payload.name || userEmail,
       isAdmin: getAdminEmails().includes(userEmail),
     };
@@ -195,5 +210,7 @@ async function authenticate(event) {
 module.exports = {
   authenticate,
   getAdminEmails,
+  getClaimEmails,
   getHeader,
+  normalizeEmail,
 };

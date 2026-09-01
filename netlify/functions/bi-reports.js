@@ -1,11 +1,23 @@
 const { connectLambda, getStore } = require("@netlify/blobs");
+const { createHash } = require("node:crypto");
 const { authenticate } = require("./_auth");
 
 const STORE_NAME = "datareports-bi";
 const REPORTS_KEY = "reports.json";
+const REPORT_PERMISSION_PREFIX = "report-permissions/";
 const AUDIT_KEY = "reports-audit.json";
 const HISTORY_KEY = "reports-history.json";
 const HISTORY_LIMIT = 20;
+
+function normalizeEmail(value) {
+  const cleaned = String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/\s+/g, "")
+    .replace(/[^\x21-\x7E]/g, "")
+    .toLowerCase();
+  return cleaned.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)?.[0] || cleaned;
+}
 
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
@@ -13,10 +25,7 @@ const headers = {
   Vary: "Authorization",
 };
 
-const readHeaders = {
-  ...headers,
-  "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
-};
+const readHeaders = headers;
 
 function json(statusCode, body, responseHeaders = headers) {
   return {
@@ -42,29 +51,17 @@ function normalizeVisibilityMode(mode) {
 }
 
 function normalizeList(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => String(item || "").trim().toLowerCase())
-      .filter(Boolean);
-  }
-
-  return String(value || "")
-    .split(/[;,\n]/)
-    .map((item) => item.trim().toLowerCase().replace(/^@/, ""))
-    .filter(Boolean);
+  return [...new Set((Array.isArray(value) ? value : [value])
+    .flatMap((item) => String(item || "").split(/[;,\n]/))
+    .map((item) => normalizeEmail(item).replace(/^@/, ""))
+    .filter(Boolean))];
 }
 
 function normalizeEmailList(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => String(item || "").trim().toLowerCase())
-      .filter(Boolean);
-  }
-
-  return String(value || "")
-    .split(/[;,\n]/)
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
+  return [...new Set((Array.isArray(value) ? value : [value])
+    .flatMap((item) => String(item || "").split(/[;,\n]/))
+    .map(normalizeEmail)
+    .filter(Boolean))];
 }
 
 function normalizeVersionHistory(value) {
@@ -81,8 +78,6 @@ function normalizeVersionHistory(value) {
 }
 
 function normalizeReport(report = {}) {
-  const now = new Date().toISOString();
-
   return {
     id: String(report.id || report.reportId || "").trim(),
     groupId: String(report.groupId || report.workspaceId || "").trim(),
@@ -126,40 +121,87 @@ function normalizeReport(report = {}) {
       ? Number(report.sortOrder)
       : 999,
 
-    createdAt: report.createdAt || now,
-    updatedAt: report.updatedAt || now,
+    createdAt: String(report.createdAt || report.updatedAt || "").trim(),
+    updatedAt: String(report.updatedAt || report.createdAt || "").trim(),
     createdBy: String(report.createdBy || "").trim(),
     updatedBy: String(report.updatedBy || "").trim(),
   };
 }
 
-function canUserSeeReport(report, userEmail, isAdmin) {
-  if (isAdmin) return true;
+function normalizeCatalog(reports = []) {
+  const canonical = new Map();
 
+  (Array.isArray(reports) ? reports : []).forEach((rawReport, index) => {
+    const report = normalizeReport(rawReport);
+    if (!report.id) return;
+
+    const timestamp = Date.parse(rawReport?.updatedAt || rawReport?.createdAt || "");
+    const candidate = {
+      report,
+      index,
+      timestamp: Number.isFinite(timestamp) ? timestamp : null,
+    };
+    const existing = canonical.get(report.id);
+    const shouldReplace = !existing
+      || (candidate.timestamp !== null && existing.timestamp === null)
+      || (candidate.timestamp !== null && existing.timestamp !== null && candidate.timestamp >= existing.timestamp)
+      || (candidate.timestamp === null && existing.timestamp === null && candidate.index > existing.index);
+
+    if (shouldReplace) canonical.set(report.id, candidate);
+  });
+
+  return [...canonical.values()]
+    .map(({ report }) => report)
+    .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
+}
+
+function normalizeIdentityEmails(userEmail, userEmails = []) {
+  return [...new Set([userEmail, ...(Array.isArray(userEmails) ? userEmails : [])]
+    .map(normalizeEmail)
+    .filter((value) => value.includes("@")))];
+}
+
+function getCatalogRevision(reports) {
+  return createHash("sha256")
+    .update(JSON.stringify(normalizeCatalog(reports)))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function getReportAccessDecision(report, userEmail, isAdmin, userEmails = []) {
   const normalizedReport = normalizeReport(report);
-  if (normalizedReport.status === "draft") return false;
-  const email = String(userEmail || "").trim().toLowerCase();
-  const domain = email.includes("@") ? email.split("@").pop() : "";
+  if (isAdmin) return { visible: true, reason: "admin" };
+  if (normalizedReport.status === "draft") return { visible: false, reason: "draft" };
+  const identityEmails = normalizeIdentityEmails(userEmail, userEmails);
+  const identityDomains = identityEmails.map((email) => email.split("@").pop());
 
   switch (normalizedReport.visibilityMode) {
     case "admins":
-      return false;
+      return { visible: false, reason: "admins-only" };
 
     case "emails":
-      return normalizedReport.allowedEmails.includes(email);
+      return normalizedReport.allowedEmails.some((email) => identityEmails.includes(email))
+        ? { visible: true, reason: "email-match" }
+        : { visible: false, reason: "email-mismatch" };
 
     case "domains":
-      return normalizedReport.allowedDomains.includes(domain);
+      return normalizedReport.allowedDomains.some((domain) => identityDomains.includes(domain))
+        ? { visible: true, reason: "domain-match" }
+        : { visible: false, reason: "domain-mismatch" };
 
     case "all":
     default:
-      return true;
+      return { visible: true, reason: "all-users" };
   }
+}
+
+function canUserSeeReport(report, userEmail, isAdmin, userEmails = []) {
+  return getReportAccessDecision(report, userEmail, isAdmin, userEmails).visible;
 }
 
 async function readJSON(store, key, fallback) {
   try {
-    const data = await store.get(key, { type: "json" });
+    const data = await store.get(key, { type: "json", consistency: "strong" });
     return data || fallback;
   } catch (error) {
     console.error(`Error reading ${key}:`, error);
@@ -169,6 +211,63 @@ async function readJSON(store, key, fallback) {
 
 async function writeJSON(store, key, data) {
   await store.setJSON(key, data);
+}
+
+function getReportPermissionKey(reportId) {
+  return `${REPORT_PERMISSION_PREFIX}${reportId}.json`;
+}
+
+function normalizeReportPermission(report = {}) {
+  const normalized = normalizeReport(report);
+  return {
+    schemaVersion: 2,
+    reportId: normalized.id,
+    status: normalized.status,
+    visibilityMode: normalized.visibilityMode,
+    allowedEmails: normalized.allowedEmails,
+    allowedDomains: normalized.allowedDomains,
+  };
+}
+
+async function readCatalog(store, sourceReports = null) {
+  const reports = normalizeCatalog(sourceReports || await readJSON(store, REPORTS_KEY, []));
+  const permissions = await Promise.all(reports.map((report) =>
+    readJSON(store, getReportPermissionKey(report.id), null)
+  ));
+
+  return normalizeCatalog(reports.map((report, index) => {
+    const permission = permissions[index];
+    if (!permission || permission.schemaVersion !== 2 || permission.reportId !== report.id) return report;
+    return {
+      ...report,
+      ...normalizeReportPermission({ ...report, ...permission }),
+      id: report.id,
+    };
+  }));
+}
+
+async function writeVerifiedReportPermission(store, report) {
+  const expected = normalizeReportPermission(report);
+  const key = getReportPermissionKey(expected.reportId);
+  await writeJSON(store, key, expected);
+  const persisted = await readJSON(store, key, null);
+
+  if (JSON.stringify(persisted) !== JSON.stringify(expected)) {
+    throw new Error(`Netlify Blobs no confirmó los permisos del reporte ${expected.reportId}.`);
+  }
+}
+
+async function writeVerifiedCatalog(store, reports) {
+  const expected = normalizeCatalog(reports);
+  await writeJSON(store, REPORTS_KEY, expected);
+  await Promise.all(expected.map((report) => writeVerifiedReportPermission(store, report)));
+  const persisted = await readCatalog(store);
+
+  if (getCatalogRevision(persisted) !== getCatalogRevision(expected)) {
+    throw new Error("Netlify Blobs no confirmó la escritura completa del catálogo.");
+  }
+
+  return persisted;
 }
 
 async function appendAudit(store, entry) {
@@ -246,6 +345,7 @@ function validateReport(report) {
 function createHandler(dependencies = {}) {
   const authenticateRequest = dependencies.authenticate || authenticate;
   const getStoreForRequest = dependencies.getReportsStore || getReportsStore;
+  const runtime = dependencies.runtime || "lambda-edge";
 
   return async (event) => {
   try {
@@ -283,23 +383,62 @@ function createHandler(dependencies = {}) {
         });
       }
 
-      const reports = await readJSON(store, REPORTS_KEY, []);
-      const normalized = Array.isArray(reports)
-        ? reports.map(normalizeReport)
-        : [];
+      const rawReports = await readJSON(store, REPORTS_KEY, []);
+      const normalized = await readCatalog(store, rawReports);
+      const catalogDuplicatesRemoved = Math.max(0, (Array.isArray(rawReports) ? rawReports.length : 0) - normalizeCatalog(rawReports).length);
+      const previewEmail = normalizeEmail(params.previewEmail);
 
-      const visibleReports = normalized
-        .filter((report) => canUserSeeReport(report, userEmail, isAdmin))
+      if (previewEmail && !isAdmin) {
+        return json(403, { ok: false, error: "No autorizado. Solo administradores pueden simular permisos." });
+      }
+
+      const evaluatedEmail = previewEmail || userEmail;
+      const evaluatedEmails = previewEmail ? [previewEmail] : auth.userEmails;
+      const normalizedEvaluatedEmails = normalizeIdentityEmails(evaluatedEmail, evaluatedEmails);
+      const evaluatedAsAdmin = previewEmail ? false : isAdmin;
+      const accessDecisions = normalized.map((report) => ({
+        report,
+        decision: getReportAccessDecision(report, evaluatedEmail, evaluatedAsAdmin, evaluatedEmails),
+      }));
+      const authorizationSummary = accessDecisions.reduce((summary, { decision }) => {
+        summary[decision.reason] = (summary[decision.reason] || 0) + 1;
+        return summary;
+      }, {});
+
+      const visibleReports = accessDecisions
+        .filter(({ decision }) => decision.visible)
+        .map(({ report }) => report)
         .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
+
+      const permissionDiagnostics = previewEmail && isAdmin
+        ? accessDecisions.map(({ report, decision }) => ({
+          id: report.id,
+          name: report.name,
+          visible: decision.visible,
+          reason: decision.reason,
+          status: report.status,
+          visibilityMode: report.visibilityMode,
+          allowedEmails: report.visibilityMode === "emails" ? report.allowedEmails : [],
+          allowedDomains: report.visibilityMode === "domains" ? report.allowedDomains : [],
+        }))
+        : undefined;
 
       return json(200, {
         ok: true,
         source: "netlify-blobs",
+        runtime,
+        catalogRevision: getCatalogRevision(normalized),
         userEmail,
+        userEmails: normalizeIdentityEmails(userEmail, auth.userEmails),
+        evaluatedEmails: normalizedEvaluatedEmails,
+        authorizationSummary,
         isAdmin,
+        previewEmail: previewEmail || null,
         totalReports: normalized.length,
         visibleReports: visibleReports.length,
+        catalogDuplicatesRemoved,
         reports: visibleReports,
+        ...(permissionDiagnostics ? { permissionDiagnostics } : {}),
       }, readHeaders);
     }
 
@@ -321,10 +460,10 @@ function createHandler(dependencies = {}) {
       const snapshot = (Array.isArray(history) ? history : []).find((item) => item.id === snapshotId);
       if (!snapshot) return json(404, { ok: false, error: "La versión seleccionada ya no está disponible." });
 
-      const currentReports = await readJSON(store, REPORTS_KEY, []);
+      const currentReports = await readCatalog(store);
       await saveCatalogSnapshot(store, currentReports, { userEmail, reason: "before_rollback" });
-      const restored = (Array.isArray(snapshot.reports) ? snapshot.reports : []).map(normalizeReport);
-      await writeJSON(store, REPORTS_KEY, restored);
+      const restored = normalizeCatalog(snapshot.reports);
+      const persisted = await writeVerifiedCatalog(store, restored);
       await appendAudit(store, {
         action: "rollback_catalog",
         snapshotId,
@@ -332,7 +471,7 @@ function createHandler(dependencies = {}) {
         count: restored.length,
       });
 
-      return json(200, { ok: true, source: "netlify-blobs", restoredSnapshotId: snapshotId, reports: restored });
+      return json(200, { ok: true, source: "netlify-blobs", restoredSnapshotId: snapshotId, reports: persisted });
     }
 
     if (method === "PUT") {
@@ -379,9 +518,9 @@ function createHandler(dependencies = {}) {
         });
       }
 
-      const previousReports = await readJSON(store, REPORTS_KEY, []);
+      const previousReports = await readCatalog(store);
       await saveCatalogSnapshot(store, previousReports, { userEmail, reason: "replace_catalog" });
-      await writeJSON(store, REPORTS_KEY, normalized);
+      const persisted = await writeVerifiedCatalog(store, normalized);
 
       await appendAudit(store, {
         action: "replace_catalog",
@@ -392,7 +531,8 @@ function createHandler(dependencies = {}) {
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        reports: normalized,
+        catalogRevision: getCatalogRevision(persisted),
+        reports: persisted,
       });
     }
 
@@ -415,10 +555,7 @@ function createHandler(dependencies = {}) {
         });
       }
 
-      const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = Array.isArray(reports)
-        ? reports.map(normalizeReport)
-        : [];
+      const existing = await readCatalog(store);
       const previousId = String(
         body.previousId || (method === "PATCH" ? incoming.id : "")
       ).trim();
@@ -442,7 +579,7 @@ function createHandler(dependencies = {}) {
       ].sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 
       await saveCatalogSnapshot(store, existing, { userEmail, reason: method === "POST" ? "create_report" : "update_report" });
-      await writeJSON(store, REPORTS_KEY, updated);
+      const persisted = await writeVerifiedCatalog(store, updated);
 
       await appendAudit(store, {
         action: method === "POST" ? "create_report" : "upsert_report",
@@ -454,8 +591,9 @@ function createHandler(dependencies = {}) {
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        report: incoming,
-        reports: updated,
+        report: persisted.find((report) => report.id === incoming.id) || incoming,
+        catalogRevision: getCatalogRevision(persisted),
+        reports: persisted,
       });
     }
 
@@ -470,16 +608,13 @@ function createHandler(dependencies = {}) {
         });
       }
 
-      const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = Array.isArray(reports)
-        ? reports.map(normalizeReport)
-        : [];
+      const existing = await readCatalog(store);
 
       const removed = existing.find((report) => report.id === reportId);
       const updated = existing.filter((report) => report.id !== reportId);
 
       await saveCatalogSnapshot(store, existing, { userEmail, reason: "delete_report" });
-      await writeJSON(store, REPORTS_KEY, updated);
+      const persisted = await writeVerifiedCatalog(store, updated);
 
       await appendAudit(store, {
         action: "delete_report",
@@ -492,7 +627,8 @@ function createHandler(dependencies = {}) {
         ok: true,
         source: "netlify-blobs",
         deleted: reportId,
-        reports: updated,
+        catalogRevision: getCatalogRevision(persisted),
+        reports: persisted,
       });
     }
 
@@ -513,4 +649,4 @@ function createHandler(dependencies = {}) {
 
 exports.createHandler = createHandler;
 exports.handler = createHandler();
-exports.__test = { canUserSeeReport, normalizeReport, validateReport };
+exports.__test = { canUserSeeReport, getCatalogRevision, getReportAccessDecision, normalizeCatalog, normalizeReport, validateReport };
