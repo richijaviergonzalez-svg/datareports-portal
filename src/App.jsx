@@ -3201,6 +3201,15 @@ function Dashboard({ user, onLogout }) {
   const displayReports = activeView === "favorites" ? filtered.filter(r => favorites.includes(r.id))
     : activeView === "recent" ? recentViews.filter(r => userVisibleReports.some(rr => rr.id === r.id))
     : filtered;
+  const hasActiveCatalogFilters = Boolean(
+    searchQuery.trim() || activeCategory !== "Todos" || statusFilter !== "all"
+  );
+  const emptyCatalogTitle = previewUserEmail && isAdmin(user.email)
+    ? "Este usuario no tiene reportes disponibles"
+    : "No tenés reportes disponibles";
+  const emptyCatalogDescription = previewUserEmail && isAdmin(user.email)
+    ? "No hay reportes publicados y asignados a esta cuenta"
+    : "No hay reportes publicados y asignados a tu cuenta";
 
   const requestStatusLabels = REQUEST_STATUS_LABELS;
   const requestPriorityLabels = REQUEST_PRIORITY_LABELS;
@@ -4371,12 +4380,12 @@ function Dashboard({ user, onLogout }) {
             <div style={{ textAlign: "center", padding: 60, animation: "fadeUp .4s ease-out" }}>
               <svg width="56" height="56" viewBox="0 0 48 48" style={{ color: theme.border, marginBottom: 16 }}><circle cx="20" cy="20" r="14" stroke="currentColor" strokeWidth="2" fill="none"/><line x1="30" y1="30" x2="40" y2="40" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               <p style={{ fontSize: 16, fontWeight: 500, color: theme.text }}>
-                {activeView === "favorites" ? "No tenés favoritos aún" : activeView === "recent" ? "No hay reportes recientes" : "No encontramos reportes con estos filtros"}
+                {activeView === "favorites" ? "No tenés favoritos aún" : activeView === "recent" ? "No hay reportes recientes" : hasActiveCatalogFilters ? "No encontramos reportes con estos filtros" : emptyCatalogTitle}
               </p>
               <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 6, maxWidth: 360, margin: "6px auto 0" }}>
-                {activeView === "favorites" ? "Marcá reportes con la estrella ⭐ para acceso rápido" : activeView === "recent" ? "Los reportes que abras aparecerán acá" : "Intentá cambiar los filtros de categoría, estado o término de búsqueda"}
+                {activeView === "favorites" ? "Marcá reportes con la estrella ⭐ para acceso rápido" : activeView === "recent" ? "Los reportes que abras aparecerán acá" : hasActiveCatalogFilters ? "Intentá cambiar los filtros de categoría, estado o término de búsqueda" : emptyCatalogDescription}
               </p>
-              {searchQuery && (
+              {activeView === "dashboard" && hasActiveCatalogFilters && (
                 <button onClick={() => { setSearchQuery(""); setActiveCategory("Todos"); setStatusFilter("all"); }} style={{ marginTop: 16, padding: "8px 20px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, color: T.teal, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
                   Limpiar filtros
                 </button>
