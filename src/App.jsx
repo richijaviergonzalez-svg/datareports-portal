@@ -3116,7 +3116,13 @@ function Dashboard({ user, onLogout }) {
   const catalogForCurrentView = previewUserEmail && isAdmin(user.email) && Array.isArray(previewCatalogReports)
     ? previewCatalogReports
     : reports;
-  const userVisibleReports = catalogForCurrentView.filter(r => canUserViewReport(r, effectiveCatalogUser));
+  const catalogAlreadyAuthorized = Boolean(
+    (previewUserEmail && isAdmin(user.email) && Array.isArray(previewCatalogReports)) ||
+    (!isAdmin(user.email) && catalogDiagnostics)
+  );
+  const userVisibleReports = catalogAlreadyAuthorized
+    ? catalogForCurrentView
+    : catalogForCurrentView.filter(r => canUserViewReport(r, effectiveCatalogUser));
   const showPreviewDiagnostics = window.location.hostname.startsWith("deploy-preview-22--");
   const activeCatalogDiagnostics = previewUserEmail && permissionPreviewResult
     ? permissionPreviewResult
