@@ -127,6 +127,15 @@ test("una actualización atómica conserva el catálogo y autoriza al usuario", 
     "lorena.caballero@pilarpy.onmicrosoft.com",
   ]);
 
+  // Simula que una copia anterior del catálogo completo reaparece después del guardado.
+  await store.setJSON("reports.json", [
+    report(UUIDS.public),
+    report(UUIDS.matching, {
+      visibilityMode: "emails",
+      allowedEmails: ["admin@pilarpy.onmicrosoft.com"],
+    }),
+  ]);
+
   const lorenaHandler = createHandler({
     authenticate: async () => ({
       ok: true,

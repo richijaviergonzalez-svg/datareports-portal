@@ -4,6 +4,7 @@ const { authenticate } = require("./_auth");
 
 const STORE_NAME = "datareports-bi";
 const REPORTS_KEY = "reports.json";
+const REPORT_PERMISSION_PREFIX = "report-permissions/";
 const AUDIT_KEY = "reports-audit.json";
 const HISTORY_KEY = "reports-history.json";
 const HISTORY_LIMIT = 20;
@@ -224,10 +225,54 @@ async function writeJSON(store, key, data) {
   await store.setJSON(key, data);
 }
 
+function getReportPermissionKey(reportId) {
+  return `${REPORT_PERMISSION_PREFIX}${reportId}.json`;
+}
+
+function normalizeReportPermission(report = {}) {
+  const normalized = normalizeReport(report);
+  return {
+    reportId: normalized.id,
+    status: normalized.status,
+    visibilityMode: normalized.visibilityMode,
+    allowedEmails: normalized.allowedEmails,
+    allowedDomains: normalized.allowedDomains,
+  };
+}
+
+async function readCatalog(store, sourceReports = null) {
+  const reports = normalizeCatalog(sourceReports || await readJSON(store, REPORTS_KEY, []));
+  const permissions = await Promise.all(reports.map((report) =>
+    readJSON(store, getReportPermissionKey(report.id), null)
+  ));
+
+  return normalizeCatalog(reports.map((report, index) => {
+    const permission = permissions[index];
+    if (!permission || permission.reportId !== report.id) return report;
+    return {
+      ...report,
+      ...normalizeReportPermission({ ...report, ...permission }),
+      id: report.id,
+    };
+  }));
+}
+
+async function writeVerifiedReportPermission(store, report) {
+  const expected = normalizeReportPermission(report);
+  const key = getReportPermissionKey(expected.reportId);
+  await writeJSON(store, key, expected);
+  const persisted = await readJSON(store, key, null);
+
+  if (JSON.stringify(persisted) !== JSON.stringify(expected)) {
+    throw new Error(`Netlify Blobs no confirmó los permisos del reporte ${expected.reportId}.`);
+  }
+}
+
 async function writeVerifiedCatalog(store, reports) {
   const expected = normalizeCatalog(reports);
   await writeJSON(store, REPORTS_KEY, expected);
-  const persisted = normalizeCatalog(await readJSON(store, REPORTS_KEY, []));
+  await Promise.all(expected.map((report) => writeVerifiedReportPermission(store, report)));
+  const persisted = await readCatalog(store);
 
   if (getCatalogRevision(persisted) !== getCatalogRevision(expected)) {
     throw new Error("Netlify Blobs no confirmó la escritura completa del catálogo.");
@@ -349,9 +394,9 @@ function createHandler(dependencies = {}) {
         });
       }
 
-      const reports = await readJSON(store, REPORTS_KEY, []);
-      const normalized = normalizeCatalog(reports);
-      const catalogDuplicatesRemoved = Math.max(0, (Array.isArray(reports) ? reports.length : 0) - normalized.length);
+      const rawReports = await readJSON(store, REPORTS_KEY, []);
+      const normalized = await readCatalog(store, rawReports);
+      const catalogDuplicatesRemoved = Math.max(0, (Array.isArray(rawReports) ? rawReports.length : 0) - normalizeCatalog(rawReports).length);
       const previewEmail = normalizeEmail(params.previewEmail);
 
       if (previewEmail && !isAdmin) {
@@ -426,10 +471,10 @@ function createHandler(dependencies = {}) {
       const snapshot = (Array.isArray(history) ? history : []).find((item) => item.id === snapshotId);
       if (!snapshot) return json(404, { ok: false, error: "La versión seleccionada ya no está disponible." });
 
-      const currentReports = await readJSON(store, REPORTS_KEY, []);
+      const currentReports = await readCatalog(store);
       await saveCatalogSnapshot(store, currentReports, { userEmail, reason: "before_rollback" });
       const restored = normalizeCatalog(snapshot.reports);
-      await writeJSON(store, REPORTS_KEY, restored);
+      const persisted = await writeVerifiedCatalog(store, restored);
       await appendAudit(store, {
         action: "rollback_catalog",
         snapshotId,
@@ -437,7 +482,7 @@ function createHandler(dependencies = {}) {
         count: restored.length,
       });
 
-      return json(200, { ok: true, source: "netlify-blobs", restoredSnapshotId: snapshotId, reports: restored });
+      return json(200, { ok: true, source: "netlify-blobs", restoredSnapshotId: snapshotId, reports: persisted });
     }
 
     if (method === "PUT") {
@@ -484,7 +529,7 @@ function createHandler(dependencies = {}) {
         });
       }
 
-      const previousReports = await readJSON(store, REPORTS_KEY, []);
+      const previousReports = await readCatalog(store);
       await saveCatalogSnapshot(store, previousReports, { userEmail, reason: "replace_catalog" });
       const persisted = await writeVerifiedCatalog(store, normalized);
 
@@ -521,8 +566,7 @@ function createHandler(dependencies = {}) {
         });
       }
 
-      const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = normalizeCatalog(reports);
+      const existing = await readCatalog(store);
       const previousId = String(
         body.previousId || (method === "PATCH" ? incoming.id : "")
       ).trim();
@@ -575,8 +619,7 @@ function createHandler(dependencies = {}) {
         });
       }
 
-      const reports = await readJSON(store, REPORTS_KEY, []);
-      const existing = normalizeCatalog(reports);
+      const existing = await readCatalog(store);
 
       const removed = existing.find((report) => report.id === reportId);
       const updated = existing.filter((report) => report.id !== reportId);
