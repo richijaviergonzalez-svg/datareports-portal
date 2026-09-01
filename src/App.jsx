@@ -334,7 +334,12 @@ function PowerBIEmbed({ report, dark, preview = false }) {
 
         embeddedReport.on("error", (event) => {
           if (mounted) {
-            setError("Error al cargar el reporte: " + (event?.detail?.message || "Error desconocido"));
+            const powerBiMessage = event?.detail?.message || "Error desconocido";
+            setError(
+              powerBiMessage.includes("PowerBINotAuthorizedException")
+                ? "La tarjeta está visible en DataReports, pero Power BI no concedió acceso a esta cuenta. Verificá el permiso del usuario en el reporte, la aplicación o el workspace de Power BI."
+                : "Error al cargar el reporte: " + powerBiMessage
+            );
             setLoading(false);
           }
         });
@@ -460,7 +465,7 @@ function PowerBIEmbed({ report, dark, preview = false }) {
             <line x1="24" y1="14" x2="24" y2="28" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             <circle cx="24" cy="34" r="2" fill="currentColor" />
           </svg>
-          <p style={{ fontSize: 13, color: "#EF4444", fontWeight: 500 }}>Error al cargar</p>
+          <p style={{ fontSize: 13, color: "#EF4444", fontWeight: 500 }}>{error.includes("Power BI no concedió acceso") ? "Sin permiso en Power BI" : "Error al cargar"}</p>
           <p style={{ fontSize: 11, color: dark ? "#5C6478" : "#9CA3AF", marginTop: 4, maxWidth: 400, textAlign: "center" }}>{error}</p>
           <button onClick={handleRetry} style={{ marginTop: 16, padding: "8px 24px", borderRadius: 12, border: `1px solid ${dark ? "#2A2F3C" : "#E5E7EB"}`, background: dark ? "#1E222D" : "#FFFFFF", color: "#0D9488", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
             Reintentar
@@ -833,7 +838,7 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
   const visibleCatalog = list.filter(report => {
     const query = catalogSearch.trim().toLowerCase();
     if (!query) return true;
-    return [report.name, report.category, report.owner, report.version].some(value => String(value || "").toLowerCase().includes(query));
+    return [report.name, report.category, report.owner, report.version, report.id, report.groupId, report.visibilityMode].some(value => String(value || "").toLowerCase().includes(query));
   });
   const normalizedPreviewEmail = previewEmail.trim().toLowerCase();
   const activePreviewResult = permissionPreviewResult?.previewEmail === normalizedPreviewEmail
@@ -886,6 +891,15 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
               {editing ? "Editar reporte" : "Agregar nuevo reporte"}
             </h3>
             <p style={{ fontSize: 11, color: theme.textMuted, marginBottom: 20 }}>{editing ? "Los cambios se publican en el catálogo compartido al guardar." : "Completá la información para incorporar un tablero al catálogo."}</p>
+
+            {editing && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", margin: "-10px 0 18px", padding: "9px 11px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, color: theme.textMuted, fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+                <span><strong style={{ color: theme.text }}>Reporte:</strong> {form.name || "Sin nombre"}</span>
+                <span><strong style={{ color: theme.text }}>Categoría:</strong> {form.category}</span>
+                <span><strong style={{ color: theme.text }}>Report ID:</strong> …{form.id.slice(-8)}</span>
+                <span><strong style={{ color: theme.text }}>Workspace:</strong> {form.groupId ? `…${form.groupId.slice(-8)}` : "My Workspace"}</span>
+              </div>
+            )}
 
             <div style={{ marginBottom: 16 }}>
               <label style={mutedLabel}>Paso 1 — URL del reporte de Power BI</label>
@@ -959,6 +973,11 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
                     <option value="emails">Usuarios específicos por correo</option>
                     <option value="domains">Dominios específicos</option>
                   </select>
+                  {form.visibilityMode === "all" && (
+                    <p style={{ marginTop: 7, padding: "8px 9px", borderRadius: 8, color: dark ? "#FCD34D" : "#92400E", background: dark ? "#F59E0B14" : "#FFFBEB", border: `1px solid ${dark ? "#F59E0B33" : "#FDE68A"}`, fontSize: 10, lineHeight: 1.4 }}>
+                      La tarjeta será visible para todos los usuarios autenticados. Esto no concede acceso al reporte dentro de Power BI.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label style={mutedLabel}>Nota de visibilidad</label>
@@ -1089,6 +1108,12 @@ function AdminPanel({ reports, onSave, onClose, onLoadHistory, onRollback, onPre
                       <span style={{ fontSize: 9, color: dark ? colors.darkText : colors.accent, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{report.category}</span>
                       <span style={{ width: 3, height: 3, borderRadius: 99, background: theme.textMuted }}/>
                       <span style={{ fontSize: 9, color: report.status === "live" ? "#10B981" : report.status === "draft" ? "#F59E0B" : "#EF4444" }}>{statusConfig[report.status]?.label || "Activo"}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 4, minWidth: 0, color: theme.textMuted, fontSize: 8.5, fontFamily: "'JetBrains Mono', monospace" }}>
+                      <span title={report.id}>ID …{report.id.slice(-8)}</span>
+                      <span style={{ color: report.visibilityMode === "all" ? "#D97706" : T.teal }}>
+                        {report.visibilityMode === "all" ? "Todos" : report.visibilityMode === "admins" ? "Solo admin" : report.visibilityMode === "emails" ? "Por correo" : "Por dominio"}
+                      </span>
                     </div>
                   </div>
                   <button onClick={(e) => { e.stopPropagation(); handleEdit(report); }} title="Editar reporte" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.bgSurface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
