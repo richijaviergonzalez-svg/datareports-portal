@@ -107,11 +107,13 @@ function verifySignature(jwt, jwk) {
 }
 
 function normalizeEmail(value) {
-  return String(value || "")
+  const cleaned = String(value || "")
     .normalize("NFKC")
     .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g, "")
-    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^\x21-\x7E]/g, "")
     .toLowerCase();
+  return cleaned.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)?.[0] || cleaned;
 }
 
 function getClaimEmails(payload = {}) {

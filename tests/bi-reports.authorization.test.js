@@ -95,6 +95,52 @@ test("un usuario no administrador no puede modificar el catálogo llamando la fu
   assert.equal(store.writes, 0);
 });
 
+test("un permiso guardado por correo se conserva y autoriza al usuario", async () => {
+  const store = createStore([report(UUIDS.public)]);
+  const adminHandler = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", isAdmin: true }),
+    getReportsStore: () => store,
+  });
+
+  const saveResponse = await adminHandler({
+    httpMethod: "PUT",
+    headers: {},
+    body: JSON.stringify({
+      reports: [
+        report(UUIDS.matching, {
+          visibilityMode: "emails",
+          allowedEmails: ["Lorena Caballero < Lorena.Caballero\u200B@PilarPy.onmicrosoft.com >"],
+        }),
+      ],
+    }),
+  });
+  const savedBody = JSON.parse(saveResponse.body);
+
+  assert.equal(saveResponse.statusCode, 200);
+  assert.deepEqual(savedBody.reports[0].allowedEmails, [
+    "lorena.caballero@pilarpy.onmicrosoft.com",
+  ]);
+
+  const lorenaHandler = createHandler({
+    authenticate: async () => ({
+      ok: true,
+      userEmail: "lorena.caballero@pilarpy.onmicrosoft.com",
+      isAdmin: false,
+    }),
+    getReportsStore: () => store,
+  });
+  const readResponse = await lorenaHandler({
+    httpMethod: "GET",
+    headers: {},
+    queryStringParameters: {},
+  });
+  const readBody = JSON.parse(readResponse.body);
+
+  assert.equal(readResponse.statusCode, 200);
+  assert.equal(readBody.visibleReports, 1);
+  assert.deepEqual(readBody.reports.map((item) => item.id), [UUIDS.matching]);
+});
+
 test("autoriza reportes asignados a un alias firmado de la misma cuenta", async () => {
   const store = createStore([
     report(UUIDS.public),
@@ -140,7 +186,7 @@ test("normaliza los correos alternativos presentes en el token de Microsoft", ()
 
 test("elimina caracteres invisibles de una identidad firmada", () => {
   assert.equal(
-    normalizeEmail(" Lorena.Caballero\u200B@PilarPy.onmicrosoft.com "),
+    normalizeEmail("Lorena Caballero < Lorena.Caballero\u200B@PilarPy.onmicrosoft.com >"),
     "lorena.caballero@pilarpy.onmicrosoft.com"
   );
 });

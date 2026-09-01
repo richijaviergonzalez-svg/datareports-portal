@@ -9,11 +9,13 @@ const HISTORY_KEY = "reports-history.json";
 const HISTORY_LIMIT = 20;
 
 function normalizeEmail(value) {
-  return String(value || "")
+  const cleaned = String(value || "")
     .normalize("NFKC")
     .replace(/[\u0000-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g, "")
-    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^\x21-\x7E]/g, "")
     .toLowerCase();
+  return cleaned.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)?.[0] || cleaned;
 }
 
 const headers = {
@@ -220,6 +222,18 @@ async function readJSON(store, key, fallback) {
 
 async function writeJSON(store, key, data) {
   await store.setJSON(key, data);
+}
+
+async function writeVerifiedCatalog(store, reports) {
+  const expected = normalizeCatalog(reports);
+  await writeJSON(store, REPORTS_KEY, expected);
+  const persisted = normalizeCatalog(await readJSON(store, REPORTS_KEY, []));
+
+  if (getCatalogRevision(persisted) !== getCatalogRevision(expected)) {
+    throw new Error("Netlify Blobs no confirmó la escritura completa del catálogo.");
+  }
+
+  return persisted;
 }
 
 async function appendAudit(store, entry) {
@@ -472,7 +486,7 @@ function createHandler(dependencies = {}) {
 
       const previousReports = await readJSON(store, REPORTS_KEY, []);
       await saveCatalogSnapshot(store, previousReports, { userEmail, reason: "replace_catalog" });
-      await writeJSON(store, REPORTS_KEY, normalized);
+      const persisted = await writeVerifiedCatalog(store, normalized);
 
       await appendAudit(store, {
         action: "replace_catalog",
@@ -483,7 +497,8 @@ function createHandler(dependencies = {}) {
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        reports: normalized,
+        catalogRevision: getCatalogRevision(persisted),
+        reports: persisted,
       });
     }
 
@@ -531,7 +546,7 @@ function createHandler(dependencies = {}) {
       ].sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 
       await saveCatalogSnapshot(store, existing, { userEmail, reason: method === "POST" ? "create_report" : "update_report" });
-      await writeJSON(store, REPORTS_KEY, updated);
+      const persisted = await writeVerifiedCatalog(store, updated);
 
       await appendAudit(store, {
         action: method === "POST" ? "create_report" : "upsert_report",
@@ -543,8 +558,9 @@ function createHandler(dependencies = {}) {
       return json(200, {
         ok: true,
         source: "netlify-blobs",
-        report: incoming,
-        reports: updated,
+        report: persisted.find((report) => report.id === incoming.id) || incoming,
+        catalogRevision: getCatalogRevision(persisted),
+        reports: persisted,
       });
     }
 
