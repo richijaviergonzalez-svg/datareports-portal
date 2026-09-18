@@ -274,7 +274,9 @@ function PowerBIEmbed({ report, dark, preview = false }) {
   useEffect(() => {
     let mounted = true;
     let tokenRefreshInterval = null;
-    let resizeTimeout = null;
+    let resizeObserver = null;
+    let resizeFrame = null;
+    const resizeTimeouts = new Set();
     let embeddedReport = null;
 
     const resizeEmbeddedReport = async () => {
@@ -285,6 +287,29 @@ function PowerBIEmbed({ report, dark, preview = false }) {
       } catch (e) {
         console.warn("Power BI resize failed:", e);
       }
+    };
+
+    const queueEmbeddedReportResize = (delay = 0) => {
+      if (delay > 0) {
+        const timeout = setTimeout(() => {
+          resizeTimeouts.delete(timeout);
+          queueEmbeddedReportResize();
+        }, delay);
+        resizeTimeouts.add(timeout);
+        return;
+      }
+
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        resizeEmbeddedReport();
+      });
+    };
+
+    const settleEmbeddedReportLayout = () => {
+      queueEmbeddedReportResize();
+      queueEmbeddedReportResize(300);
+      queueEmbeddedReportResize(1000);
     };
 
     async function embed() {
@@ -312,7 +337,9 @@ function PowerBIEmbed({ report, dark, preview = false }) {
             background: models.BackgroundType.Default,
             layoutType: models.LayoutType.Custom,
             customLayout: {
-              displayOption: models.DisplayOption.FitToPage,
+              displayOption: preview
+                ? models.DisplayOption.FitToPage
+                : models.DisplayOption.FitToWidth,
             },
           },
         };
@@ -320,17 +347,21 @@ function PowerBIEmbed({ report, dark, preview = false }) {
         service.reset(container);
         embeddedReport = service.embed(container, embedConfig);
 
+        if (typeof ResizeObserver !== "undefined") {
+          resizeObserver = new ResizeObserver(() => {
+            queueEmbeddedReportResize();
+          });
+          resizeObserver.observe(container);
+        }
+
         embeddedReport.on("loaded", () => {
           if (!mounted) return;
           setLoading(false);
-
-          resizeTimeout = setTimeout(() => {
-            resizeEmbeddedReport();
-          }, 350);
+          settleEmbeddedReportLayout();
         });
 
         embeddedReport.on("rendered", () => {
-          resizeEmbeddedReport();
+          settleEmbeddedReportLayout();
         });
 
         embeddedReport.on("error", (event) => {
@@ -367,7 +398,7 @@ function PowerBIEmbed({ report, dark, preview = false }) {
     embed();
 
     const handleWindowResize = () => {
-      resizeEmbeddedReport();
+      settleEmbeddedReportLayout();
     };
 
     window.addEventListener("resize", handleWindowResize);
@@ -377,7 +408,10 @@ function PowerBIEmbed({ report, dark, preview = false }) {
       window.removeEventListener("resize", handleWindowResize);
 
       if (tokenRefreshInterval) clearInterval(tokenRefreshInterval);
-      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeObserver?.disconnect();
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
+      resizeTimeouts.forEach(clearTimeout);
+      resizeTimeouts.clear();
 
       const container = document.getElementById(containerId);
       if (container) {
