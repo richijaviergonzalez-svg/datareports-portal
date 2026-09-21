@@ -62,6 +62,109 @@ test("un usuario autenticado recibe solo reportes publicados y autorizados", asy
   assert.match(body.catalogRevision, /^[a-f0-9]{16}$/);
 });
 
+test("una publicación crea un aviso con el reporte correcto solo para usuarios con acceso", async () => {
+  const store = createStore([]);
+  const admin = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", userEmails: ["admin@pilarpy.onmicrosoft.com"], isAdmin: true }),
+    getReportsStore: () => store,
+  });
+  const published = report(UUIDS.matching, {
+    visibilityMode: "emails",
+    allowedEmails: ["lorena@pilarpy.onmicrosoft.com"],
+    createdAt: "2026-09-21T12:00:00.000Z",
+    updatedAt: "2026-09-21T12:00:00.000Z",
+  });
+  const response = await admin({ httpMethod: "POST", body: JSON.stringify({ report: published }) });
+  assert.equal(response.statusCode, 200);
+
+  const forUser = (email) => createHandler({
+    authenticate: async () => ({ ok: true, userEmail: email, userEmails: [email], isAdmin: false }),
+    getReportsStore: () => store,
+  });
+  const lorena = JSON.parse((await forUser("lorena@pilarpy.onmicrosoft.com")({ httpMethod: "GET", queryStringParameters: {} })).body);
+  const other = JSON.parse((await forUser("otra@pilarpy.onmicrosoft.com")({ httpMethod: "GET", queryStringParameters: {} })).body);
+  assert.equal(lorena.notifications.length, 1);
+  assert.equal(lorena.notifications[0].reportId, UUIDS.matching);
+  assert.equal(lorena.notifications[0].read, false);
+  assert.deepEqual(other.notifications, []);
+});
+
+test("marcar como leída persiste por cuenta sin afectar a otro usuario", async () => {
+  const store = createStore([]);
+  const published = report(UUIDS.public, { createdAt: "2026-09-21T12:00:00.000Z", updatedAt: "2026-09-21T12:00:00.000Z" });
+  const admin = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", isAdmin: true }),
+    getReportsStore: () => store,
+  });
+  assert.equal((await admin({ httpMethod: "POST", body: JSON.stringify({ report: published }) })).statusCode, 200);
+
+  const handlerFor = (email) => createHandler({
+    authenticate: async () => ({ ok: true, userEmail: email, userEmails: [email], isAdmin: false }),
+    getReportsStore: () => store,
+  });
+  const lorenaHandler = handlerFor("lorena@pilarpy.onmicrosoft.com");
+  const before = JSON.parse((await lorenaHandler({ httpMethod: "GET", queryStringParameters: {} })).body);
+  const id = before.notifications[0].id;
+  assert.equal((await lorenaHandler({ httpMethod: "POST", body: JSON.stringify({ action: "mark_notifications_read", ids: [id] }) })).statusCode, 200);
+  const after = JSON.parse((await lorenaHandler({ httpMethod: "GET", queryStringParameters: {} })).body);
+  const other = JSON.parse((await handlerFor("rocio@pilarpy.onmicrosoft.com")({ httpMethod: "GET", queryStringParameters: {} })).body);
+  assert.equal(after.notifications[0].read, true);
+  assert.equal(other.notifications[0].read, false);
+});
+
+test("un acceso nuevo avisa solo a quien antes no podía ver el reporte", async () => {
+  const store = createStore([report(UUIDS.matching, {
+    visibilityMode: "emails",
+    allowedEmails: ["richi@pilarpy.onmicrosoft.com"],
+    updatedAt: "2026-09-20T12:00:00.000Z",
+  })]);
+  const admin = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", isAdmin: true }),
+    getReportsStore: () => store,
+  });
+  const changed = report(UUIDS.matching, {
+    visibilityMode: "emails",
+    allowedEmails: ["richi@pilarpy.onmicrosoft.com", "lorena@pilarpy.onmicrosoft.com"],
+    updatedAt: "2026-09-21T12:00:00.000Z",
+  });
+  assert.equal((await admin({ httpMethod: "PATCH", body: JSON.stringify({ report: changed }) })).statusCode, 200);
+
+  const getFor = async (email) => {
+    const handler = createHandler({
+      authenticate: async () => ({ ok: true, userEmail: email, userEmails: [email], isAdmin: false }),
+      getReportsStore: () => store,
+    });
+    return JSON.parse((await handler({ httpMethod: "GET", queryStringParameters: {} })).body);
+  };
+  const lorena = await getFor("lorena@pilarpy.onmicrosoft.com");
+  const richi = await getFor("richi@pilarpy.onmicrosoft.com");
+  assert.equal(lorena.notifications.length, 1);
+  assert.match(lorena.notifications[0].message, /Ahora tenés acceso/);
+  assert.deepEqual(richi.notifications, []);
+});
+
+test("una nueva versión avisa solo a suscriptores autorizados", async () => {
+  const store = createStore([report(UUIDS.public, { version: "1.0", updatedAt: "2026-09-20T12:00:00.000Z" })]);
+  const { createHash } = require("node:crypto");
+  const key = `subscriptions/${createHash("sha256").update("lorena@pilarpy.onmicrosoft.com").digest("hex")}.json`;
+  await store.setJSON(key, { reportIds: [UUIDS.public] });
+  const admin = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", isAdmin: true }),
+    getReportsStore: () => store,
+  });
+  assert.equal((await admin({ httpMethod: "PATCH", body: JSON.stringify({ report: report(UUIDS.public, { version: "2.0", updatedAt: "2026-09-21T12:00:00.000Z" }) }) })).statusCode, 200);
+
+  const getFor = async (email) => {
+    const handler = createHandler({
+      authenticate: async () => ({ ok: true, userEmail: email, userEmails: [email], isAdmin: false }),
+      getReportsStore: () => store,
+    });
+    return JSON.parse((await handler({ httpMethod: "GET", queryStringParameters: {} })).body);
+  };
+  assert.equal((await getFor("lorena@pilarpy.onmicrosoft.com")).notifications.length, 1);
+  assert.deepEqual((await getFor("rocio@pilarpy.onmicrosoft.com")).notifications, []);
+});
+
 test("reconoce todos los correos guardados juntos en una entrada antigua", async () => {
   const store = createStore([
     report(UUIDS.matching, {

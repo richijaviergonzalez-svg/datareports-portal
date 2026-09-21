@@ -62,6 +62,7 @@ import {
   fetchReportSubscriptions,
   fetchReportsCatalog,
   fetchReportsHistory,
+  markReportNotificationsRead,
   rollbackReportsCatalog,
   saveBiIncidents,
   saveReportSubscriptions,
@@ -69,7 +70,7 @@ import {
   saveReportsCatalog,
   updateBiRequestStatus,
 } from "./lib/biApi.js";
-import { loadCatalogRecovery, loadPortalState, saveCatalogRecovery, savePortalState } from "./lib/storage.js";
+import { loadCatalogRecovery, loadPortalState, loadUserNotifications, saveCatalogRecovery, savePortalState, saveUserNotifications } from "./lib/storage.js";
 import {
   getReportTransitionName,
   handlePremiumPointerMove,
@@ -2473,7 +2474,8 @@ function Dashboard({ user, onLogout }) {
   const [cmdK, setCmdK] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [showNotif, setShowNotif] = useState(false);
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState(() => loadUserNotifications(user?.email));
+  const [serverNotifications, setServerNotifications] = useState([]);
   const [subscriptions, setSubscriptions] = useState([]);
   const [previewUserEmail, setPreviewUserEmail] = useState("");
   const [previewCatalogReports, setPreviewCatalogReports] = useState(null);
@@ -2711,7 +2713,6 @@ function Dashboard({ user, onLogout }) {
     if (isAdmin(user?.email)) setLocalCatalogRecovery(normalizeReports(loadCatalogRecovery()));
     if (savedState.favorites) setFavorites(savedState.favorites);
     if (savedState.recentViews) setRecentViews(savedState.recentViews);
-    if (savedState.notifications) setNotifications(savedState.notifications);
     if (savedState.requests) setRequests(savedState.requests);
     if (savedState.incidents) {
       incidentsRef.current = savedState.incidents;
@@ -2802,21 +2803,9 @@ function Dashboard({ user, onLogout }) {
       // Netlify Blobs es la única fuente autorizada para mostrar el catálogo.
       const sharedReports = normalizeReports(data.reports);
 
-      const subscribedUpdates = sharedReports.filter((nextReport) => {
-        if (!subscriptions.includes(nextReport.id) || !nextReport.version) return false;
-        const previousReport = reports.find((report) => report.id === nextReport.id);
-        return previousReport && previousReport.version && previousReport.version !== nextReport.version;
-      });
-      const nextNotifications = subscribedUpdates.length
-        ? [
-            ...subscribedUpdates.map((report) => ({ id: Date.now() + Math.random(), type: "update", message: `${report.name} publicó la versión ${report.version}`, time: new Date().toISOString(), reportId: report.id, read: false })),
-            ...notifications,
-          ].slice(0, 20)
-        : notifications;
-
       setReports(sharedReports);
-      if (subscribedUpdates.length) setNotifications(nextNotifications);
-      saveAll(sharedReports, favorites, recentViews, nextNotifications, requests);
+      setServerNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+      saveAll(sharedReports, favorites, recentViews, notifications, requests);
 
       setReportSyncStatus("shared");
       setReportSyncMessage(sharedReports.length ? "Catálogo sincronizado" : "Catálogo sincronizado: sin reportes");
@@ -2827,7 +2816,7 @@ function Dashboard({ user, onLogout }) {
       setReportSyncMessage("Catálogo no disponible");
       setCatalogReady(true);
     }
-  }, [reports, favorites, recentViews, notifications, requests, subscriptions, saveAll, shouldSyncShared]);
+  }, [favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
 
   // Cargar catálogo central al iniciar sesión y mantenerlo actualizado para todos los usuarios.
   useEffect(() => {
@@ -2840,13 +2829,17 @@ function Dashboard({ user, onLogout }) {
     if (!loaded || !user?.email) return;
 
     const handleVisibility = () => {
-      if (document.visibilityState === "visible") fetchSharedReports();
+      if (document.visibilityState === "visible") fetchSharedReports({ force: true });
     };
 
     document.addEventListener("visibilitychange", handleVisibility);
+    const refreshInterval = setInterval(() => {
+      if (document.visibilityState === "visible") fetchSharedReports({ force: true });
+    }, 60 * 1000);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
+      clearInterval(refreshInterval);
     };
   }, [loaded, user?.email, fetchSharedReports]);
 
@@ -2909,6 +2902,7 @@ function Dashboard({ user, onLogout }) {
       }
 
       setReports(syncedReports);
+      setServerNotifications(Array.isArray(confirmation.notifications) ? confirmation.notifications : []);
       saveAll(syncedReports, favorites, recentViews, notifications, requests);
       saveCatalogRecovery(syncedReports);
       setLocalCatalogRecovery(syncedReports);
@@ -2932,24 +2926,8 @@ function Dashboard({ user, onLogout }) {
 
   const saveReports = async (newReports) => {
     const cleanReports = normalizeReports(newReports);
-    const existing = reports.map(r => r.id);
-    const added = cleanReports.filter(r => !existing.includes(r.id));
-    const versionUpdates = cleanReports.filter(next => {
-      const previous = reports.find(report => report.id === next.id);
-      return previous && next.version && next.version !== previous.version;
-    });
-    let updatedNotifs = notifications;
-    if (added.length > 0 || versionUpdates.length > 0) {
-      updatedNotifs = [
-        ...added.map(r => ({ id: Date.now() + Math.random(), type: "new", message: `Nuevo reporte agregado: ${r.name}`, time: new Date().toISOString(), reportId: r.id, read: false })),
-        ...versionUpdates.map(r => ({ id: Date.now() + Math.random(), type: "update", message: `${r.name} actualizado a v${r.version}`, time: new Date().toISOString(), reportId: r.id, read: false })),
-        ...notifications,
-      ].slice(0, 20);
-    }
     const result = await pushSharedReports(cleanReports);
     const finalReports = normalizeReports(result.reports || cleanReports);
-    const finalNotifications = result.ok ? updatedNotifs : notifications;
-    if (result.ok && finalNotifications !== notifications) setNotifications(finalNotifications);
 
     // Mantener sincronizados los paneles abiertos sin obligar a recargar la página.
     if (selectedReport) {
@@ -2962,7 +2940,7 @@ function Dashboard({ user, onLogout }) {
       if (updatedDetail) setDetailReport(updatedDetail);
     }
 
-    saveAll(finalReports, favorites, recentViews, finalNotifications, requests);
+    saveAll(finalReports, favorites, recentViews, notifications, requests);
     return { ...result, reports: finalReports };
   };
 
@@ -2981,6 +2959,10 @@ function Dashboard({ user, onLogout }) {
   };
 
   useEffect(() => { if (loaded) saveAll(reports, favorites, recentViews, notifications, requests); }, [favorites, requests, loaded]);
+
+  useEffect(() => {
+    if (loaded) saveUserNotifications(user?.email, notifications);
+  }, [loaded, user?.email, notifications]);
 
   useEffect(() => {
     if (!loaded || !user?.email) return;
@@ -3085,14 +3067,36 @@ function Dashboard({ user, onLogout }) {
     setExporting(false);
   };
 
-  // Mark notification as read
-  const markNotifRead = (id) => {
-    const updated = notifications.map(n => n.id === id ? { ...n, read: true } : n);
-    setNotifications(updated);
-    saveAll(reports, favorites, recentViews, updated, requests);
+  const markNotifRead = async (id) => {
+    if (String(id).startsWith("report:")) {
+      setServerNotifications((current) => current.map((item) => item.id === id ? { ...item, read: true } : item));
+      try {
+        await markReportNotificationsRead({ getAccessToken, ids: [id] });
+      } catch (error) {
+        setServerNotifications((current) => current.map((item) => item.id === id ? { ...item, read: false } : item));
+        showToast(error.message, "error");
+      }
+      return;
+    }
+    setNotifications((current) => current.map((item) => item.id === id ? { ...item, read: true } : item));
   };
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const markAllNotifsRead = async () => {
+    const serverIds = serverNotifications.filter((item) => !item.read).map((item) => item.id);
+    setServerNotifications((current) => current.map((item) => ({ ...item, read: true })));
+    setNotifications((current) => current.map((item) => ({ ...item, read: true })));
+    if (!serverIds.length) return;
+    try {
+      await markReportNotificationsRead({ getAccessToken, ids: serverIds });
+    } catch (error) {
+      setServerNotifications((current) => current.map((item) => serverIds.includes(item.id) ? { ...item, read: false } : item));
+      showToast(error.message, "error");
+    }
+  };
+
+  const allNotifications = [...serverNotifications, ...notifications]
+    .sort((a, b) => new Date(b.time) - new Date(a.time));
+  const unreadCount = allNotifications.filter((item) => !item.read).length;
 
   const showToast = (message, type = "success") => {
     setToast({ id: Date.now(), message, type });
@@ -3348,7 +3352,7 @@ function Dashboard({ user, onLogout }) {
       if (e.altKey && e.key === "1") { e.preventDefault(); navigateToView("dashboard"); }
       if (e.altKey && e.key === "2") { e.preventDefault(); navigateToView("favorites"); }
       if (e.altKey && e.key.toLowerCase() === "a" && isAdmin(user.email)) { e.preventDefault(); openAdminPanel(); }
-      if (e.key === "Escape") { setCmdK(false); setCommandQuery(""); }
+      if (e.key === "Escape") { setCmdK(false); setShowNotif(false); setCommandQuery(""); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -4055,34 +4059,33 @@ function Dashboard({ user, onLogout }) {
 
             {/* Notification bell */}
             <div style={{ position: "relative" }}>
-              <button className="motion-control" onClick={() => setShowNotif(!showNotif)} aria-label="Abrir notificaciones" data-tooltip="Notificaciones" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", transition: "all .2s" }}>
+              <button className="motion-control" onClick={() => setShowNotif(!showNotif)} aria-label={`Notificaciones: ${unreadCount} sin leer`} aria-expanded={showNotif} aria-controls="notification-panel" data-tooltip="Notificaciones" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.bgCard, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", transition: "all .2s" }}>
                 <svg width="15" height="15" viewBox="0 0 16 16" style={{ color: theme.textSecondary }}><path d="M8 1.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 8.5v-3a4 4 0 0 0-4-4z" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M6 13a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>
-                {unreadCount > 0 && <div style={{ position: "absolute", top: 5, right: 5, width: 8, height: 8, borderRadius: 4, background: "#EF4444", border: `2px solid ${theme.bgCard}` }}/>}
+                {unreadCount > 0 && <span style={{ position: "absolute", top: -6, right: -7, minWidth: 18, height: 18, padding: "0 3px", borderRadius: 9, background: "#EF4444", color: "#fff", fontSize: 10, fontWeight: 700, lineHeight: "18px", textAlign: "center", border: `2px solid ${theme.bgCard}` }}>{unreadCount > 99 ? "99+" : unreadCount}</span>}
               </button>
               {showNotif && (
-                <div style={{ position: "absolute", top: 44, right: 0, width: 360, background: theme.bgCard, borderRadius: 18, border: `1px solid ${theme.border}`, boxShadow: `0 16px 48px ${dark ? "rgba(0,0,0,.4)" : "rgba(0,0,0,.12)"}`, zIndex: 50, animation: "scaleIn .2s ease-out", overflow: "hidden" }}>
+                <div id="notification-panel" role="region" aria-label="Notificaciones" style={{ position: "absolute", top: 44, right: 0, width: "min(360px, calc(100vw - 24px))", background: theme.bgCard, borderRadius: 8, border: `1px solid ${theme.border}`, boxShadow: `0 16px 48px ${dark ? "rgba(0,0,0,.4)" : "rgba(0,0,0,.12)"}`, zIndex: 50, animation: "scaleIn .2s ease-out", overflow: "hidden" }}>
                   <div style={{ padding: "16px 20px", borderBottom: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>Notificaciones</span>
-                    {unreadCount > 0 && <span style={{ fontSize: 10, color: T.teal, background: dark ? T.teal + "15" : T.tealBg, padding: "2px 10px", borderRadius: 10, fontWeight: 500 }}>{unreadCount} nuevas</span>}
+                    {unreadCount > 0 && <button type="button" onClick={markAllNotifsRead} style={{ border: "none", background: "none", color: T.teal, fontSize: 11, cursor: "pointer" }}>Marcar todas como leídas</button>}
                   </div>
                   <div style={{ maxHeight: 320, overflow: "auto" }}>
-                    {notifications.length === 0 ? (
+                    {allNotifications.length === 0 ? (
                       <div style={{ padding: 32, textAlign: "center" }}>
                         <svg width="32" height="32" viewBox="0 0 16 16" style={{ color: theme.border, marginBottom: 8 }}><path d="M8 1.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 8.5v-3a4 4 0 0 0-4-4z" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>
                         <p style={{ fontSize: 12, color: theme.textMuted }}>Sin notificaciones</p>
                       </div>
-                    ) : notifications.map(n => (
-                      <div key={n.id} onClick={() => { markNotifRead(n.id); if (n.requestId) { const req = requests.find(rr => rr.id === n.requestId); if (req) setSelectedRequest(req); navigateToView("requests"); } else if (n.reportId) { const r = userVisibleReports.find(rr => rr.id === n.reportId); if (r) openReport(r); } setShowNotif(false); }}
-                        style={{ padding: "14px 20px", borderBottom: `1px solid ${theme.border}`, cursor: "pointer", background: n.read ? "transparent" : (dark ? T.teal + "05" : T.tealBg + "80"), transition: "background .2s" }}
-                        onMouseEnter={e => e.currentTarget.style.background = theme.bgSurface} onMouseLeave={e => e.currentTarget.style.background = n.read ? "transparent" : (dark ? T.teal + "05" : T.tealBg + "80")}>
-                        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    ) : allNotifications.map(n => (
+                      <div key={n.id} style={{ padding: "10px 14px", borderBottom: `1px solid ${theme.border}`, display: "flex", alignItems: "center", gap: 4, background: n.read ? "transparent" : (dark ? T.teal + "05" : T.tealBg + "80") }}>
+                        <button type="button" onClick={() => { markNotifRead(n.id); if (n.requestId) { const req = requests.find(rr => rr.id === n.requestId); if (req) setSelectedRequest(req); navigateToView("requests"); } else if (n.reportId) { const report = userVisibleReports.find(rr => rr.id === n.reportId); if (report) openReport(report); else showToast("Este reporte ya no está disponible para tu cuenta", "error"); } setShowNotif(false); }}
+                          aria-label={`Abrir: ${n.message}`} style={{ flex: 1, minWidth: 0, padding: "4px 6px", display: "flex", alignItems: "flex-start", gap: 10, textAlign: "left", border: "none", background: "none", cursor: "pointer" }}>
                           <div style={{ width: 8, height: 8, borderRadius: 4, marginTop: 4, flexShrink: 0, background: n.type === "new" ? T.teal : n.type === "update" ? "#3B82F6" : "#F59E0B" }}/>
-                          <div>
+                          <div style={{ minWidth: 0 }}>
                             <p style={{ fontSize: 12, color: theme.text, lineHeight: 1.4 }}>{n.message}</p>
                             <p style={{ fontSize: 10, color: theme.textMuted, marginTop: 3 }}>{timeAgo(n.time)}</p>
                           </div>
-                          {!n.read && <div style={{ width: 6, height: 6, borderRadius: 3, background: T.teal, marginLeft: "auto", marginTop: 6 }}/>}
-                        </div>
+                        </button>
+                        {!n.read && <button type="button" onClick={() => markNotifRead(n.id)} title="Marcar como leída" aria-label={`Marcar como leída: ${n.message}`} style={{ flexShrink: 0, padding: 6, border: "none", background: "none", color: T.teal, cursor: "pointer", fontSize: 16 }}>✓</button>}
                       </div>
                     ))}
                   </div>

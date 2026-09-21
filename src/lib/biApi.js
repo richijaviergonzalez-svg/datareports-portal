@@ -36,6 +36,18 @@ export async function fetchReportsCatalog({ getAccessToken, previewEmail = "" })
   return readJson(response, "shared-reports-unavailable");
 }
 
+export async function markReportNotificationsRead({ getAccessToken, ids }) {
+  const response = await fetch(REPORTS_ENDPOINT, {
+    method: "POST",
+    headers: await buildAuthHeaders(getAccessToken, {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    }),
+    body: JSON.stringify({ action: "mark_notifications_read", ids }),
+  });
+  return readJson(response, "No se pudieron marcar las notificaciones como leídas");
+}
+
 export async function saveReportsCatalog({ getAccessToken, reports, user }) {
   const response = await fetch(REPORTS_ENDPOINT, {
     method: "PUT",
