@@ -1,5 +1,25 @@
 const STORAGE_KEY = "datareports-config";
 const CATALOG_RECOVERY_KEY = "datareports-admin-catalog-recovery";
+const USER_NOTIFICATIONS_PREFIX = "datareports-notifications:";
+
+export function loadUserNotifications(email) {
+  try {
+    const key = `${USER_NOTIFICATIONS_PREFIX}${String(email || "").trim().toLowerCase()}`;
+    const data = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+export function saveUserNotifications(email, notifications) {
+  try {
+    const key = `${USER_NOTIFICATIONS_PREFIX}${String(email || "").trim().toLowerCase()}`;
+    localStorage.setItem(key, JSON.stringify(notifications));
+  } catch (error) {
+    // Request notifications remain available for the current session.
+  }
+}
 
 export function loadPortalState() {
   try {
@@ -11,7 +31,6 @@ export function loadPortalState() {
       reports: Array.isArray(data.reports) ? data.reports : [],
       favorites: Array.isArray(data.favorites) ? data.favorites : [],
       recentViews: Array.isArray(data.recentViews) ? data.recentViews : [],
-      notifications: Array.isArray(data.notifications) ? data.notifications : [],
       requests: Array.isArray(data.requests) ? data.requests : [],
       auditEvents: Array.isArray(data.auditEvents) ? data.auditEvents : [],
       incidents: Array.isArray(data.incidents) ? data.incidents : [],
@@ -21,14 +40,13 @@ export function loadPortalState() {
   }
 }
 
-export function savePortalState({ reports, favorites, recentViews, notifications, requests, auditEvents, incidents }) {
+export function savePortalState({ reports, favorites, recentViews, requests, auditEvents, incidents }) {
   try {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
         favorites: favorites || [],
         recentViews: recentViews || [],
-        notifications: notifications || [],
         requests: requests || [],
         auditEvents: auditEvents || [],
         incidents: incidents || [],

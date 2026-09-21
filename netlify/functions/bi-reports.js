@@ -7,6 +7,8 @@ const REPORTS_KEY = "reports.json";
 const REPORT_PERMISSION_PREFIX = "report-permissions/";
 const AUDIT_KEY = "reports-audit.json";
 const HISTORY_KEY = "reports-history.json";
+const NOTIFICATIONS_KEY = "report-notifications.json";
+const NOTIFICATION_READ_PREFIX = "notification-read/";
 const HISTORY_LIMIT = 20;
 
 function normalizeEmail(value) {
@@ -217,6 +219,42 @@ function getReportPermissionKey(reportId) {
   return `${REPORT_PERMISSION_PREFIX}${reportId}.json`;
 }
 
+function getNotificationReadKey(email) {
+  return `${NOTIFICATION_READ_PREFIX}${createHash("sha256").update(normalizeEmail(email)).digest("hex")}.json`;
+}
+
+async function appendReportNotifications(store, previousReports, currentReports) {
+  const previousById = new Map(previousReports.map((report) => [report.id, report]));
+  const now = new Date().toISOString();
+  const additions = currentReports.flatMap((report) => {
+    const previous = previousById.get(report.id);
+    if (report.status === "draft") return [];
+    const becameAvailable = !previous || previous.status === "draft";
+    const versionChanged = previous && report.version && report.version !== previous.version;
+    const accessChanged = previous && !becameAvailable && (
+      previous.visibilityMode !== report.visibilityMode
+      || JSON.stringify(previous.allowedEmails) !== JSON.stringify(report.allowedEmails)
+      || JSON.stringify(previous.allowedDomains) !== JSON.stringify(report.allowedDomains)
+    );
+    const types = becameAvailable ? ["new"] : [
+      ...(versionChanged ? ["update"] : []),
+      ...(accessChanged ? ["access"] : []),
+    ];
+    return types.map((type) => ({
+      id: `report:${report.id}:${type}:${report.updatedAt || now}`,
+      type,
+      reportId: report.id,
+      version: report.version,
+      time: now,
+      ...(type === "access" ? { previousPermission: normalizeReportPermission(previous) } : {}),
+    }));
+  });
+  if (!additions.length) return;
+  const existing = await readJSON(store, NOTIFICATIONS_KEY, []);
+  const byId = new Map([...additions, ...(Array.isArray(existing) ? existing : [])].map((item) => [item.id, item]));
+  await writeJSON(store, NOTIFICATIONS_KEY, [...byId.values()].slice(0, 200));
+}
+
 function normalizeReportPermission(report = {}) {
   const normalized = normalizeReport(report);
   return {
@@ -410,6 +448,35 @@ function createHandler(dependencies = {}) {
         .map(({ report }) => report)
         .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
 
+      const visibleById = new Map(visibleReports.map((report) => [report.id, report]));
+      const [publishedEvents, readState, subscriptionState] = await Promise.all([
+        readJSON(store, NOTIFICATIONS_KEY, []),
+        readJSON(store, getNotificationReadKey(userEmail), { ids: [] }),
+        readJSON(store, `subscriptions/${createHash("sha256").update(normalizeEmail(userEmail)).digest("hex")}.json`, { reportIds: [] }),
+      ]);
+      const readIds = new Set(Array.isArray(readState?.ids) ? readState.ids : []);
+      const subscribedIds = new Set(Array.isArray(subscriptionState?.reportIds) ? subscriptionState.reportIds : []);
+      const notifications = (Array.isArray(publishedEvents) ? publishedEvents : [])
+        .filter((item) => visibleById.has(item.reportId)
+          && (item.type !== "update" || subscribedIds.has(item.reportId))
+          && (item.type !== "access" || (item.previousPermission && !canUserSeeReport(item.previousPermission, userEmail, isAdmin, auth.userEmails))))
+        .slice(0, 50)
+        .map((item) => {
+          const report = visibleById.get(item.reportId);
+          return {
+            id: item.id,
+            type: item.type,
+            reportId: item.reportId,
+            time: item.time,
+            message: item.type === "update"
+              ? `${report.name} publicó la versión ${item.version}`
+              : item.type === "access"
+                ? `Ahora tenés acceso a ${report.name}`
+                : `Nuevo reporte disponible: ${report.name}`,
+            read: readIds.has(item.id),
+          };
+        });
+
       const permissionDiagnostics = previewEmail && isAdmin
         ? accessDecisions.map(({ report, decision }) => ({
           id: report.id,
@@ -438,8 +505,24 @@ function createHandler(dependencies = {}) {
         visibleReports: visibleReports.length,
         catalogDuplicatesRemoved,
         reports: visibleReports,
+        notifications,
         ...(permissionDiagnostics ? { permissionDiagnostics } : {}),
       }, readHeaders);
+    }
+
+    if (method === "POST") {
+      const body = JSON.parse(event.body || "{}");
+      if (body.action === "mark_notifications_read") {
+        const requestedIds = [...new Set((Array.isArray(body.ids) ? body.ids : [])
+          .map((id) => String(id || "").trim()).filter((id) => id.length <= 160))].slice(0, 200);
+        const published = await readJSON(store, NOTIFICATIONS_KEY, []);
+        const allowedIds = new Set((Array.isArray(published) ? published : []).map((item) => item.id));
+        const key = getNotificationReadKey(userEmail);
+        const previous = await readJSON(store, key, { ids: [] });
+        const ids = [...new Set([...(Array.isArray(previous?.ids) ? previous.ids : []), ...requestedIds.filter((id) => allowedIds.has(id))])].slice(-500);
+        await writeJSON(store, key, { ids });
+        return json(200, { ok: true, ids });
+      }
     }
 
     if (!isAdmin) {
@@ -464,6 +547,7 @@ function createHandler(dependencies = {}) {
       await saveCatalogSnapshot(store, currentReports, { userEmail, reason: "before_rollback" });
       const restored = normalizeCatalog(snapshot.reports);
       const persisted = await writeVerifiedCatalog(store, restored);
+      await appendReportNotifications(store, currentReports, persisted);
       await appendAudit(store, {
         action: "rollback_catalog",
         snapshotId,
@@ -521,6 +605,7 @@ function createHandler(dependencies = {}) {
       const previousReports = await readCatalog(store);
       await saveCatalogSnapshot(store, previousReports, { userEmail, reason: "replace_catalog" });
       const persisted = await writeVerifiedCatalog(store, normalized);
+      await appendReportNotifications(store, previousReports, persisted);
 
       await appendAudit(store, {
         action: "replace_catalog",
@@ -580,6 +665,7 @@ function createHandler(dependencies = {}) {
 
       await saveCatalogSnapshot(store, existing, { userEmail, reason: method === "POST" ? "create_report" : "update_report" });
       const persisted = await writeVerifiedCatalog(store, updated);
+      await appendReportNotifications(store, existing, persisted);
 
       await appendAudit(store, {
         action: method === "POST" ? "create_report" : "upsert_report",
