@@ -246,6 +246,7 @@ async function appendReportNotifications(store, previousReports, currentReports)
       reportId: report.id,
       version: report.version,
       time: now,
+      publishedPermission: normalizeReportPermission(report),
       ...(type === "access" ? { previousPermission: normalizeReportPermission(previous) } : {}),
     }));
   });
@@ -458,6 +459,7 @@ function createHandler(dependencies = {}) {
       const subscribedIds = new Set(Array.isArray(subscriptionState?.reportIds) ? subscriptionState.reportIds : []);
       const notifications = (Array.isArray(publishedEvents) ? publishedEvents : [])
         .filter((item) => visibleById.has(item.reportId)
+          && (isAdmin || (item.publishedPermission && canUserSeeReport(item.publishedPermission, userEmail, false, auth.userEmails)))
           && (item.type !== "update" || subscribedIds.has(item.reportId))
           && (item.type !== "access" || (item.previousPermission && !canUserSeeReport(item.previousPermission, userEmail, isAdmin, auth.userEmails))))
         .slice(0, 50)

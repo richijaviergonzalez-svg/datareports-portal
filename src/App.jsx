@@ -3082,8 +3082,8 @@ function Dashboard({ user, onLogout }) {
   };
 
   const markAllNotifsRead = async () => {
-    const serverIds = serverNotifications.filter((item) => !item.read).map((item) => item.id);
-    setServerNotifications((current) => current.map((item) => ({ ...item, read: true })));
+    const serverIds = allNotifications.filter((item) => String(item.id).startsWith("report:") && !item.read).map((item) => item.id);
+    setServerNotifications((current) => current.map((item) => serverIds.includes(item.id) ? { ...item, read: true } : item));
     setNotifications((current) => current.map((item) => ({ ...item, read: true })));
     if (!serverIds.length) return;
     try {
@@ -3093,10 +3093,6 @@ function Dashboard({ user, onLogout }) {
       showToast(error.message, "error");
     }
   };
-
-  const allNotifications = [...serverNotifications, ...notifications]
-    .sort((a, b) => new Date(b.time) - new Date(a.time));
-  const unreadCount = allNotifications.filter((item) => !item.read).length;
 
   const showToast = (message, type = "success") => {
     setToast({ id: Date.now(), message, type });
@@ -3371,6 +3367,12 @@ function Dashboard({ user, onLogout }) {
   const userVisibleReports = catalogAlreadyAuthorized
     ? catalogForCurrentView
     : catalogForCurrentView.filter(r => canUserViewReport(r, effectiveCatalogUser));
+  const visibleReportIds = new Set(userVisibleReports.map((report) => report.id));
+  const allNotifications = [
+    ...serverNotifications.filter((item) => visibleReportIds.has(item.reportId)),
+    ...notifications,
+  ].sort((a, b) => new Date(b.time) - new Date(a.time));
+  const unreadCount = allNotifications.filter((item) => !item.read).length;
   const showPreviewDiagnostics = window.location.hostname.startsWith("deploy-preview-22--");
   const activeCatalogDiagnostics = previewUserEmail && permissionPreviewResult
     ? permissionPreviewResult
@@ -3991,7 +3993,7 @@ function Dashboard({ user, onLogout }) {
     <div className="portal-shell" style={{ fontFamily: "'Outfit', system-ui", minHeight: "100vh", background: theme.bg, transition: "background .3s" }}>
       <style>{globalStyles}</style>
       {showIncidentEditor && <IncidentEditor dark={dark} incidents={incidents} onSave={saveSharedIncidents} onClose={() => setShowIncidentEditor(false)}/>}
-      {showNotif && <div onClick={() => setShowNotif(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }}/>}
+      {showNotif && <div onClick={() => setShowNotif(false)} style={{ position: "fixed", inset: 0, zIndex: 19 }}/>}
       {renderActionModal()}
       {renderToast()}
 
