@@ -143,6 +143,49 @@ test("un acceso nuevo avisa solo a quien antes no podía ver el reporte", async 
   assert.deepEqual(richi.notifications, []);
 });
 
+test("un aviso de publicación no se redistribuye al ampliar permisos después", async () => {
+  const store = createStore([]);
+  const admin = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "admin@pilarpy.onmicrosoft.com", isAdmin: true }),
+    getReportsStore: () => store,
+  });
+  const scoped = report(UUIDS.matching, {
+    visibilityMode: "emails",
+    allowedEmails: ["lorena@pilarpy.onmicrosoft.com"],
+    updatedAt: "2026-09-21T12:00:00.000Z",
+  });
+  assert.equal((await admin({ httpMethod: "POST", body: JSON.stringify({ report: scoped }) })).statusCode, 200);
+  assert.equal((await admin({ httpMethod: "PATCH", body: JSON.stringify({ report: {
+    ...scoped,
+    visibilityMode: "all",
+    updatedAt: "2026-09-22T12:00:00.000Z",
+  } }) })).statusCode, 200);
+
+  const handler = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "rocio@pilarpy.onmicrosoft.com", userEmails: ["rocio@pilarpy.onmicrosoft.com"], isAdmin: false }),
+    getReportsStore: () => store,
+  });
+  const body = JSON.parse((await handler({ httpMethod: "GET", queryStringParameters: {} })).body);
+  assert.ok(body.notifications.every((item) => item.type !== "new"));
+  assert.equal(body.notifications.filter((item) => item.type === "access").length, 1);
+});
+
+test("avisos antiguos sin permisos al publicar no se muestran a usuarios comunes", async () => {
+  const store = createStore([report(UUIDS.public)]);
+  await store.setJSON("report-notifications.json", [{
+    id: `report:${UUIDS.public}:new:legacy`,
+    type: "new",
+    reportId: UUIDS.public,
+    time: "2026-09-21T12:00:00.000Z",
+  }]);
+  const handler = createHandler({
+    authenticate: async () => ({ ok: true, userEmail: "lorena@pilarpy.onmicrosoft.com", userEmails: ["lorena@pilarpy.onmicrosoft.com"], isAdmin: false }),
+    getReportsStore: () => store,
+  });
+  const body = JSON.parse((await handler({ httpMethod: "GET", queryStringParameters: {} })).body);
+  assert.deepEqual(body.notifications, []);
+});
+
 test("una nueva versión avisa solo a suscriptores autorizados", async () => {
   const store = createStore([report(UUIDS.public, { version: "1.0", updatedAt: "2026-09-20T12:00:00.000Z" })]);
   const { createHash } = require("node:crypto");
