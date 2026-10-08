@@ -66,6 +66,8 @@ export default function AuditPanel({ dark, events, reports, syncStatus, syncMess
   const [reportId, setReportId] = useState("all");
   const [query, setQuery] = useState("");
   const [selectedIp, setSelectedIp] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   const filteredEvents = useMemo(() => filterAuditEvents(events, {
     actionFilter,
@@ -79,26 +81,28 @@ export default function AuditPanel({ dark, events, reports, syncStatus, syncMess
   const selectedRow = ipRows.find((row) => row.ipAddress === selectedIp) || ipRows[0] || null;
   const accountOptions = useMemo(() => [...new Set(events.map((event) => event.actorEmail).filter(Boolean))].sort(), [events]);
 
-  const exportAuditCsv = () => {
-    const header = ["Fecha", "IP", "Dispositivo", "Sesion", "Cuenta", "Usuario", "Accion", "Reporte", "Detalle"];
-    const rows = filteredEvents.map((event) => [
-      formatDate(event.createdAt),
-      event.ipAddress || "No disponible",
-      event.deviceId,
-      event.sessionId,
-      event.actorEmail,
-      event.actorName,
-      event.actionLabel,
-      event.subjectName || event.subjectId,
-      getAuditEventDetail(event),
-    ]);
-    const csv = `\uFEFF${[header, ...rows].map((row) => row.map((cell) => `"${String(cell || "").replace(/"/g, '""')}"`).join(",")).join("\n")}`;
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `datareports-accesos-ip-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+  const exportAuditXlsx = async () => {
+    if (exporting || !filteredEvents.length) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const { buildAuditWorkbook } = await import("./auditWorkbook.js");
+      const bytes = await buildAuditWorkbook(filteredEvents, ipRows);
+      const blob = new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `datareports-accesos-ip-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("No se pudo generar el archivo XLSX:", error);
+      setExportError("No se pudo generar el archivo. Intenta nuevamente.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const openReport = (id) => {
@@ -125,9 +129,10 @@ export default function AuditPanel({ dark, events, reports, syncStatus, syncMess
           <button className="audit-icon-button" onClick={onRefresh} title="Actualizar auditoria" style={{ color: syncStatus === "shared" ? "#0F9F6E" : theme.secondary, borderColor: theme.border, background: theme.card }}>
             <AuditIcon type="refresh" />
           </button>
-          <button className="audit-command-button" onClick={exportAuditCsv} disabled={!filteredEvents.length} title="Exportar los datos filtrados en CSV" style={{ color: filteredEvents.length ? accent : theme.muted, borderColor: theme.border, background: theme.card }}>
+          {exportError && <span className="audit-export-error" role="alert">{exportError}</span>}
+          <button className="audit-command-button" onClick={exportAuditXlsx} disabled={!filteredEvents.length || exporting} title="Exportar los datos filtrados en Excel" style={{ color: filteredEvents.length ? accent : theme.muted, borderColor: theme.border, background: theme.card }}>
             <AuditIcon type="download" />
-            Exportar CSV
+            {exporting ? "Generando..." : "Exportar XLSX"}
           </button>
         </div>
       </header>
