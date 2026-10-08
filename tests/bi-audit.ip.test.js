@@ -77,7 +77,7 @@ test("registra acceso y apertura en una sesion independiente con contexto de red
   assert.match(storedSessions[0][1].events[0].userAgent, /Chrome/);
 });
 
-test("solo administradores pueden consultar el historial agrupado", async () => {
+test("solo administradores y lectores autorizados pueden consultar el historial agrupado", async () => {
   const store = createStore();
   const writer = createHandler({ authenticate: userAuth, getAuditStore: () => store });
   await writer({
@@ -100,6 +100,21 @@ test("solo administradores pueden consultar el historial agrupado", async () => 
   assert.equal(body.events.length, 1);
   assert.equal(body.events[0].actorEmail, "ventas@pilarpy.onmicrosoft.com");
   assert.equal(body.events[0].ipAddress, "181.40.10.20");
+
+  const auditReader = createHandler({
+    authenticate: async () => ({
+      ok: true,
+      userEmail: "alfredo.martinez@pilarpy.onmicrosoft.com",
+      userName: "Alfredo Martinez",
+      isAdmin: false,
+      canViewAudit: true,
+    }),
+    getAuditStore: () => store,
+  });
+  const auditReaderResponse = await auditReader({ httpMethod: "GET", headers: {} });
+  const auditReaderBody = JSON.parse(auditReaderResponse.body);
+  assert.equal(auditReaderResponse.statusCode, 200);
+  assert.equal(auditReaderBody.events.length, 1);
 });
 
 test("mantiene visibles los eventos del formato anterior", async () => {

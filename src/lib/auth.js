@@ -27,10 +27,20 @@ const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || "richi.gonzalez@pilar
   .map((email) => email.trim().toLowerCase())
   .filter(Boolean);
 
+const AUDIT_VIEWER_EMAILS = (import.meta.env.VITE_AUDIT_VIEWER_EMAILS || "alfredo.martinez@pilarpy.onmicrosoft.com")
+  .split(",")
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean);
+
 let msalInstance = null;
 
 export function isAdmin(email) {
   return ADMIN_EMAILS.includes((email || "").toLowerCase());
+}
+
+export function canViewAudit(email) {
+  const normalizedEmail = (email || "").trim().toLowerCase();
+  return isAdmin(normalizedEmail) || AUDIT_VIEWER_EMAILS.includes(normalizedEmail);
 }
 
 export function buildUserFromAccount(account) {

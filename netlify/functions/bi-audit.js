@@ -184,8 +184,8 @@ function createHandler(dependencies = {}) {
       const store = getStoreForRequest(event);
 
       if (method === "GET") {
-        if (!auth.isAdmin) {
-          return json(403, { ok: false, error: "No autorizado. Solo administradores pueden consultar auditoria." });
+        if (!auth.isAdmin && !auth.canViewAudit) {
+          return json(403, { ok: false, error: "No autorizado para consultar auditoria." });
         }
 
         const [sessionEvents, legacyEvents] = await Promise.all([
