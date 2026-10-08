@@ -11,6 +11,7 @@ export default defineConfig({
           if (!id.includes('node_modules')) return undefined;
           if (id.includes('powerbi-client')) return 'powerbi';
           if (id.includes('@azure/msal-browser')) return 'auth';
+          if (id.includes('@office-kit/xlsx') || id.includes('fflate') || id.includes('saxes') || id.includes('xmlchars')) return 'xlsx';
           return 'vendor';
         },
       },

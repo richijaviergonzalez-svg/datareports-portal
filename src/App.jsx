@@ -24,6 +24,8 @@ import {
   getAuditStats,
   normalizeAuditEvents,
 } from "./features/audit/auditModel.js";
+import AccessAuditPanel from "./features/audit/AuditPanel.jsx";
+import { getAuditClientContext } from "./features/audit/auditClient.js";
 import {
   REQUEST_PRIORITY_LABELS,
   REQUEST_PRIORITY_OPTIONS,
@@ -47,6 +49,7 @@ import {
 } from "./features/requests/requestModel.js";
 import {
   buildUserFromAccount,
+  canViewAudit,
   getAccessToken,
   getCurrentUser,
   isAdmin,
@@ -101,7 +104,7 @@ const darkTheme = { bg: "#0F1117", bgCard: "#181B23", bgSurface: "#1E222D", bgHo
 const lightTheme = { bg: "#F6F8FC", bgCard: "#FFFFFF", bgSurface: "#F4F7FB", bgHover: "#EEF3F9", border: "#E3E8F0", borderLight: "#EDF2F7", text: "#111827", textSecondary: "#667085", textMuted: "#98A2B3" };
 const REPORTS_REFRESH_MS = 10 * 60 * 1000;
 const SHARED_STATE_REFRESH_MS = 5 * 60 * 1000;
-const AUDIT_EVENT_DEDUPE_MS = 10 * 60 * 1000;
+const AUDIT_EVENT_DEDUPE_MS = 5 * 1000;
 
 const categoryColors = {
   Abastecimiento: { bg: "#FFF4E8", accent: "#F97316", darkBg: "#F9731620", darkText: "#FDBA74" },
@@ -1406,7 +1409,7 @@ const globalStyles = `
 // ========================
 // SIDEBAR COMPONENT
 // ========================
-function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, categories, activeCategory, setActiveCategory, reports, favorites, requests = [], auditEvents = [], user, onLogout, isUserAdmin, mobileOpen = false, onMobileClose }) {
+function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, categories, activeCategory, setActiveCategory, reports, favorites, requests = [], auditEvents = [], user, onLogout, isUserAdmin, canViewAuditModule, mobileOpen = false, onMobileClose }) {
   const theme = dark ? darkTheme : lightTheme;
   const w = collapsed ? 68 : 260;
   const opsAlertCount = isUserAdmin
@@ -1421,7 +1424,11 @@ function Sidebar({ dark, collapsed, setCollapsed, activeView, setActiveView, cat
     ...(isUserAdmin ? [
       { id: "admin", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M6.5 1.5h3l.5 2 1.5.7 1.8-1 2.1 2.1-1 1.8.7 1.5 2 .5v3l-2 .5-.7 1.5 1 1.8-2.1 2.1-1.8-1-1.5.7-.5 2h-3l-.5-2-1.5-.7-1.8 1-2.1-2.1 1-1.8L1.5 9.5l-2-.5v-3l2-.5.7-1.5-1-1.8 2.1-2.1 1.8 1L6.5 1.5z" stroke="currentColor" strokeWidth="1.2" fill="none"/><circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>, label: "Administración" },
       { id: "biops", icon: <svg width="18" height="18" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" fill="none"/><path d="M5 10l2-3 2 1.8 2-3.3" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "BI Ops", count: opsAlertCount },
+    ] : []),
+    ...(canViewAuditModule ? [
       { id: "audit", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M8 1.8l5 1.8v3.6c0 3.1-2 5.8-5 7-3-1.2-5-3.9-5-7V3.6l5-1.8z" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round"/><path d="M5.6 8l1.5 1.5 3.4-3.5" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Auditoria", count: auditEvents.length },
+    ] : []),
+    ...(isUserAdmin ? [
       { id: "metrics", icon: <svg width="18" height="18" viewBox="0 0 16 16"><path d="M2 14l4-5 3 2 5-7" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>, label: "Métricas" },
     ] : []),
   ];
@@ -2511,6 +2518,8 @@ function Dashboard({ user, onLogout }) {
   const auditEventsRef = useRef([]);
   const incidentsRef = useRef([]);
   const auditPushDedupeRef = useRef({});
+  const auditPushQueueRef = useRef(Promise.resolve());
+  const platformAccessRecordedRef = useRef(false);
   const previewOpenTimerRef = useRef(null);
   const previewCloseTimerRef = useRef(null);
   const previewExpiryTimersRef = useRef(new Map());
@@ -3100,7 +3109,7 @@ function Dashboard({ user, onLogout }) {
   };
 
   const fetchSharedAuditEvents = useCallback(async (options = {}) => {
-    if (!isAdmin(user?.email)) return;
+    if (!canViewAudit(user?.email)) return;
     if (!shouldSyncShared("audit", SHARED_STATE_REFRESH_MS, options.force)) return;
 
     try {
@@ -3125,17 +3134,23 @@ function Dashboard({ user, onLogout }) {
     }
   }, [user?.email, reports, favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
 
-  const pushSharedAuditEvent = useCallback(async (event) => {
-    try {
-      await createBiAuditEvent({ getAccessToken, event });
-      setAuditSyncStatus("shared");
-      setAuditSyncMessage("Auditoria sincronizada");
-      return true;
-    } catch (e) {
-      setAuditSyncStatus("local");
-      setAuditSyncMessage("Auditoria local");
-      return false;
-    }
+  const pushSharedAuditEvent = useCallback((event) => {
+    const request = auditPushQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        try {
+          await createBiAuditEvent({ getAccessToken, event });
+          setAuditSyncStatus("shared");
+          setAuditSyncMessage("Auditoria sincronizada");
+          return true;
+        } catch (e) {
+          setAuditSyncStatus("local");
+          setAuditSyncMessage("Auditoria local");
+          return false;
+        }
+      });
+    auditPushQueueRef.current = request;
+    return request;
   }, []);
 
   const shouldPushAuditEvent = useCallback((action, subject = {}) => {
@@ -3190,11 +3205,18 @@ function Dashboard({ user, onLogout }) {
   const recordAuditEvent = useCallback((action, subject = {}, metadata = {}) => {
     if (!user?.email) return auditEventsRef.current;
 
+    let clientContext = {};
+    try {
+      clientContext = getAuditClientContext();
+    } catch (error) {
+      // Audit still records the authenticated account if browser storage is unavailable.
+    }
+
     const event = createAuditEvent({
       action,
       actor: user,
       subject,
-      metadata,
+      metadata: { ...metadata, ...clientContext },
     });
 
     const nextEvents = appendAuditEvent(auditEventsRef.current, event);
@@ -3206,6 +3228,18 @@ function Dashboard({ user, onLogout }) {
     }
     return nextEvents;
   }, [user, reports, favorites, recentViews, notifications, requests, saveAll, pushSharedAuditEvent, shouldPushAuditEvent]);
+
+  useEffect(() => {
+    if (!loaded || !user?.email || platformAccessRecordedRef.current) return;
+    platformAccessRecordedRef.current = true;
+    recordAuditEvent("platform_access", {
+      id: "datareports-portal",
+      name: "DataReports",
+      type: "system",
+    }, {
+      detail: "Ingreso autenticado a la plataforma",
+    });
+  }, [loaded, user?.email, recordAuditEvent]);
 
   const fetchSharedRequests = useCallback(async (options = {}) => {
     if (!shouldSyncShared("requests", SHARED_STATE_REFRESH_MS, options.force)) return;
@@ -3233,7 +3267,7 @@ function Dashboard({ user, onLogout }) {
   }, [loaded, user?.email, fetchSharedIncidents]);
 
   useEffect(() => {
-    if (loaded && activeView === "audit" && isAdmin(user?.email)) fetchSharedAuditEvents();
+    if (loaded && activeView === "audit" && canViewAudit(user?.email)) fetchSharedAuditEvents();
   }, [loaded, activeView, user?.email, fetchSharedAuditEvents]);
 
   useEffect(() => {
@@ -3419,6 +3453,7 @@ function Dashboard({ user, onLogout }) {
     { key: "view-dashboard", type: "view", label: "Dashboard", detail: "Ir al catálogo", action: () => navigateToView("dashboard") },
     { key: "view-favorites", type: "view", label: "Favoritos", detail: "Abrir reportes favoritos", action: () => navigateToView("favorites") },
     { key: "view-requests", type: "view", label: "Solicitudes BI", detail: "Consultar solicitudes", action: () => navigateToView("requests") },
+    ...(canViewAudit(user.email) ? [{ key: "view-audit", type: "view", label: "Auditoria", detail: "Consultar accesos y aperturas", action: () => navigateToView("audit") }] : []),
     ...(isAdmin(user.email) ? [{ key: "view-admin", type: "view", label: "Administración", detail: "Gestionar catálogo y permisos", action: () => openAdminPanel() }] : []),
     ...categories.filter((category) => category !== "Todos").map((category) => ({ key: `category-${category}`, type: "category", label: category, detail: "Filtrar por categoría", action: () => { setActiveCategory(category); navigateToView("dashboard"); } })),
     ...userVisibleReports.map((report) => ({ key: `report-${report.id}`, type: "report", label: report.name, detail: `${report.category}${report.version ? ` · v${report.version}` : ""}`, action: () => openReport(report) })),
@@ -4030,7 +4065,7 @@ function Dashboard({ user, onLogout }) {
 
       <Sidebar dark={dark} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} activeView={activeView} setActiveView={navigateToView}
         categories={categories} activeCategory={activeCategory} setActiveCategory={setActiveCategory}
-        reports={userVisibleReports} favorites={favorites} requests={requests} auditEvents={auditEvents} user={user} onLogout={onLogout} isUserAdmin={isAdmin(user.email)}
+        reports={userVisibleReports} favorites={favorites} requests={requests} auditEvents={auditEvents} user={user} onLogout={onLogout} isUserAdmin={isAdmin(user.email)} canViewAuditModule={canViewAudit(user.email)}
         mobileOpen={mobileSidebarOpen} onMobileClose={() => setMobileSidebarOpen(false)}/>
       {mobileSidebarOpen && (
         <div className="mobile-sidebar-backdrop" onClick={() => setMobileSidebarOpen(false)} style={{ display: "none", position: "fixed", inset: 0, background: "rgba(0,0,0,.42)", zIndex: 130, backdropFilter: "blur(2px)" }}/>
@@ -4217,7 +4252,7 @@ function Dashboard({ user, onLogout }) {
           {activeView === "biops" && isAdmin(user.email) && <BiOpsPanel dark={dark} reports={reports} requests={requests} onOpenRequests={openRequestsQueue}/>}
 
           {/* Audit Panel - admin only */}
-          {activeView === "audit" && isAdmin(user.email) && <AuditPanel dark={dark} events={auditEvents} reports={reports} requests={requests} syncStatus={auditSyncStatus} syncMessage={auditSyncMessage} onRefresh={() => fetchSharedAuditEvents({ force: true })} onOpenReport={openReport} onOpenRequest={openAuditedRequest}/>}
+          {activeView === "audit" && canViewAudit(user.email) && <AccessAuditPanel dark={dark} events={auditEvents} reports={reports} syncStatus={auditSyncStatus} syncMessage={auditSyncMessage} onRefresh={() => fetchSharedAuditEvents({ force: true })} onOpenReport={openReport}/>}
 
           {/* Requests module */}
           {activeView === "requests" && renderRequestsPanel()}
