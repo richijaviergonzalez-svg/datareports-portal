@@ -24,6 +24,8 @@ import {
   getAuditStats,
   normalizeAuditEvents,
 } from "./features/audit/auditModel.js";
+import AccessAuditPanel from "./features/audit/AuditPanel.jsx";
+import { getAuditClientContext } from "./features/audit/auditClient.js";
 import {
   REQUEST_PRIORITY_LABELS,
   REQUEST_PRIORITY_OPTIONS,
@@ -101,7 +103,7 @@ const darkTheme = { bg: "#0F1117", bgCard: "#181B23", bgSurface: "#1E222D", bgHo
 const lightTheme = { bg: "#F6F8FC", bgCard: "#FFFFFF", bgSurface: "#F4F7FB", bgHover: "#EEF3F9", border: "#E3E8F0", borderLight: "#EDF2F7", text: "#111827", textSecondary: "#667085", textMuted: "#98A2B3" };
 const REPORTS_REFRESH_MS = 10 * 60 * 1000;
 const SHARED_STATE_REFRESH_MS = 5 * 60 * 1000;
-const AUDIT_EVENT_DEDUPE_MS = 10 * 60 * 1000;
+const AUDIT_EVENT_DEDUPE_MS = 5 * 1000;
 
 const categoryColors = {
   Abastecimiento: { bg: "#FFF4E8", accent: "#F97316", darkBg: "#F9731620", darkText: "#FDBA74" },
@@ -2511,6 +2513,8 @@ function Dashboard({ user, onLogout }) {
   const auditEventsRef = useRef([]);
   const incidentsRef = useRef([]);
   const auditPushDedupeRef = useRef({});
+  const auditPushQueueRef = useRef(Promise.resolve());
+  const platformAccessRecordedRef = useRef(false);
   const previewOpenTimerRef = useRef(null);
   const previewCloseTimerRef = useRef(null);
   const previewExpiryTimersRef = useRef(new Map());
@@ -3125,17 +3129,23 @@ function Dashboard({ user, onLogout }) {
     }
   }, [user?.email, reports, favorites, recentViews, notifications, requests, saveAll, shouldSyncShared]);
 
-  const pushSharedAuditEvent = useCallback(async (event) => {
-    try {
-      await createBiAuditEvent({ getAccessToken, event });
-      setAuditSyncStatus("shared");
-      setAuditSyncMessage("Auditoria sincronizada");
-      return true;
-    } catch (e) {
-      setAuditSyncStatus("local");
-      setAuditSyncMessage("Auditoria local");
-      return false;
-    }
+  const pushSharedAuditEvent = useCallback((event) => {
+    const request = auditPushQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        try {
+          await createBiAuditEvent({ getAccessToken, event });
+          setAuditSyncStatus("shared");
+          setAuditSyncMessage("Auditoria sincronizada");
+          return true;
+        } catch (e) {
+          setAuditSyncStatus("local");
+          setAuditSyncMessage("Auditoria local");
+          return false;
+        }
+      });
+    auditPushQueueRef.current = request;
+    return request;
   }, []);
 
   const shouldPushAuditEvent = useCallback((action, subject = {}) => {
@@ -3190,11 +3200,18 @@ function Dashboard({ user, onLogout }) {
   const recordAuditEvent = useCallback((action, subject = {}, metadata = {}) => {
     if (!user?.email) return auditEventsRef.current;
 
+    let clientContext = {};
+    try {
+      clientContext = getAuditClientContext();
+    } catch (error) {
+      // Audit still records the authenticated account if browser storage is unavailable.
+    }
+
     const event = createAuditEvent({
       action,
       actor: user,
       subject,
-      metadata,
+      metadata: { ...metadata, ...clientContext },
     });
 
     const nextEvents = appendAuditEvent(auditEventsRef.current, event);
@@ -3206,6 +3223,18 @@ function Dashboard({ user, onLogout }) {
     }
     return nextEvents;
   }, [user, reports, favorites, recentViews, notifications, requests, saveAll, pushSharedAuditEvent, shouldPushAuditEvent]);
+
+  useEffect(() => {
+    if (!loaded || !user?.email || platformAccessRecordedRef.current) return;
+    platformAccessRecordedRef.current = true;
+    recordAuditEvent("platform_access", {
+      id: "datareports-portal",
+      name: "DataReports",
+      type: "system",
+    }, {
+      detail: "Ingreso autenticado a la plataforma",
+    });
+  }, [loaded, user?.email, recordAuditEvent]);
 
   const fetchSharedRequests = useCallback(async (options = {}) => {
     if (!shouldSyncShared("requests", SHARED_STATE_REFRESH_MS, options.force)) return;
@@ -4217,7 +4246,7 @@ function Dashboard({ user, onLogout }) {
           {activeView === "biops" && isAdmin(user.email) && <BiOpsPanel dark={dark} reports={reports} requests={requests} onOpenRequests={openRequestsQueue}/>}
 
           {/* Audit Panel - admin only */}
-          {activeView === "audit" && isAdmin(user.email) && <AuditPanel dark={dark} events={auditEvents} reports={reports} requests={requests} syncStatus={auditSyncStatus} syncMessage={auditSyncMessage} onRefresh={() => fetchSharedAuditEvents({ force: true })} onOpenReport={openReport} onOpenRequest={openAuditedRequest}/>}
+          {activeView === "audit" && isAdmin(user.email) && <AccessAuditPanel dark={dark} events={auditEvents} reports={reports} syncStatus={auditSyncStatus} syncMessage={auditSyncMessage} onRefresh={() => fetchSharedAuditEvents({ force: true })} onOpenReport={openReport}/>}
 
           {/* Requests module */}
           {activeView === "requests" && renderRequestsPanel()}
