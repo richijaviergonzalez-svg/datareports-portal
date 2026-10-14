@@ -2,6 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHandler, getClientIp } = require("../netlify/functions/bi-audit");
 
+const TEST_CREATED_AT = new Date().toISOString();
+const TEST_SESSION_STARTED_AT = new Date(Date.now() - 60 * 1000).toISOString();
+
 function createStore(initial = {}) {
   const values = new Map(Object.entries(initial));
   return {
@@ -24,12 +27,12 @@ function event(action, overrides = {}) {
     id: `audit-${action}`,
     action,
     actionLabel: action === "platform_access" ? "Acceso a la plataforma" : "Reporte abierto",
-    createdAt: "2026-10-08T12:00:00.000Z",
+    createdAt: TEST_CREATED_AT,
     subjectId: action === "report_opened" ? "report-1" : "datareports-portal",
     subjectName: action === "report_opened" ? "Ventas" : "DataReports",
     subjectType: action === "report_opened" ? "report" : "system",
     sessionId: "session-test-1",
-    sessionStartedAt: "2026-10-08T11:59:00.000Z",
+    sessionStartedAt: TEST_SESSION_STARTED_AT,
     deviceId: "device-test-1",
     metadata: { platform: "Windows", ipAddress: "203.0.113.99" },
     ...overrides,

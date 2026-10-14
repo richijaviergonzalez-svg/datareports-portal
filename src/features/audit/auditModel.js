@@ -8,6 +8,7 @@ export const AUDIT_ACTION_LABELS = {
   request_status_changed: "Estado cambiado",
   request_priority_changed: "Prioridad cambiada",
   request_admin_note_saved: "Nota admin guardada",
+  exchange_rates_published: "Cotización publicada",
 };
 
 export const AUDIT_ACTION_OPTIONS = [

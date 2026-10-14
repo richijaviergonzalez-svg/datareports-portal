@@ -26,6 +26,7 @@ import {
 } from "./features/audit/auditModel.js";
 import AccessAuditPanel from "./features/audit/AuditPanel.jsx";
 import { getAuditClientContext } from "./features/audit/auditClient.js";
+import ExchangeRatePanel from "./features/exchangeRates/ExchangeRatePanel.jsx";
 import {
   REQUEST_PRIORITY_LABELS,
   REQUEST_PRIORITY_OPTIONS,
@@ -49,6 +50,7 @@ import {
 } from "./features/requests/requestModel.js";
 import {
   buildUserFromAccount,
+  canManageExchangeRates,
   canViewAudit,
   getAccessToken,
   getCurrentUser,
@@ -59,6 +61,7 @@ import {
   createBiAuditEvent,
   createBiRequest,
   deleteReportCatalogItem,
+  fetchExchangeRates,
   fetchBiAuditEvents,
   fetchBiIncidents,
   fetchBiRequests,
@@ -66,6 +69,7 @@ import {
   fetchReportsCatalog,
   fetchReportsHistory,
   markReportNotificationsRead,
+  publishExchangeRates,
   rollbackReportsCatalog,
   saveBiIncidents,
   saveReportSubscriptions,
@@ -2494,6 +2498,10 @@ function Dashboard({ user, onLogout }) {
   const [requests, setRequests] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
   const [incidents, setIncidents] = useState([]);
+  const [exchangeRate, setExchangeRate] = useState(null);
+  const [exchangeRateHistory, setExchangeRateHistory] = useState([]);
+  const [exchangeRateLoading, setExchangeRateLoading] = useState(true);
+  const [exchangeRateSaving, setExchangeRateSaving] = useState(false);
   const [reportZoom, setReportZoom] = useState(100);
   const [requestStatusFilter, setRequestStatusFilter] = useState("all");
   const [requestTypeFilter, setRequestTypeFilter] = useState("all");
@@ -2528,6 +2536,7 @@ function Dashboard({ user, onLogout }) {
     requests: 0,
     incidents: 0,
     audit: 0,
+    exchangeRates: 0,
   });
 
   const clearPreviewInteractionTimers = useCallback(() => {
@@ -3229,6 +3238,44 @@ function Dashboard({ user, onLogout }) {
     return nextEvents;
   }, [user, reports, favorites, recentViews, notifications, requests, saveAll, pushSharedAuditEvent, shouldPushAuditEvent]);
 
+  const fetchSharedExchangeRates = useCallback(async (options = {}) => {
+    if (!shouldSyncShared("exchangeRates", 60 * 1000, options.force)) return;
+    try {
+      const data = await fetchExchangeRates({ getAccessToken });
+      setExchangeRate(data.current || null);
+      setExchangeRateHistory(Array.isArray(data.history) ? data.history : []);
+    } catch (error) {
+      sharedSyncRef.current.exchangeRates = 0;
+    } finally {
+      setExchangeRateLoading(false);
+    }
+  }, [shouldSyncShared]);
+
+  const saveExchangeRates = async ({ effectiveDate, rates }) => {
+    setExchangeRateSaving(true);
+    try {
+      const data = await publishExchangeRates({ getAccessToken, effectiveDate, rates });
+      setExchangeRate(data.current || null);
+      setExchangeRateHistory(Array.isArray(data.history) ? data.history : []);
+      recordAuditEvent("exchange_rates_published", {
+        id: data.current?.id || effectiveDate,
+        name: `Cotización ${effectiveDate}`,
+        type: "exchange_rate",
+      }, {
+        detail: "Cotización diaria publicada",
+        effectiveDate,
+        adminAction: true,
+      });
+      showToast("Cotización publicada para todos los usuarios");
+      return data;
+    } catch (error) {
+      showToast(error.message || "No se pudo publicar la cotización", "error");
+      throw error;
+    } finally {
+      setExchangeRateSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!loaded || !user?.email || platformAccessRecordedRef.current) return;
     platformAccessRecordedRef.current = true;
@@ -3265,6 +3312,23 @@ function Dashboard({ user, onLogout }) {
   useEffect(() => {
     if (loaded && user?.email) fetchSharedIncidents();
   }, [loaded, user?.email, fetchSharedIncidents]);
+
+  useEffect(() => {
+    if (loaded && user?.email) fetchSharedExchangeRates();
+  }, [loaded, user?.email, fetchSharedExchangeRates]);
+
+  useEffect(() => {
+    if (!loaded || !user?.email) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") fetchSharedExchangeRates({ force: true });
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    const refreshInterval = setInterval(handleVisibility, 5 * 60 * 1000);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      clearInterval(refreshInterval);
+    };
+  }, [loaded, user?.email, fetchSharedExchangeRates]);
 
   useEffect(() => {
     if (loaded && activeView === "audit" && canViewAudit(user?.email)) fetchSharedAuditEvents();
@@ -4167,12 +4231,21 @@ function Dashboard({ user, onLogout }) {
           ))}
           {/* Welcome and incident calendar - only on dashboard view */}
           {activeView === "dashboard" && (
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, marginBottom: 18, alignItems: "stretch" }} className="metrics-grid">
-              <div style={{ display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 14 }}>
-                <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews} embedded/>
+            <div style={{ display: "grid", gap: 14, marginBottom: 18 }}>
+              <WelcomeBanner user={user} dark={dark} reports={userVisibleReports} recentReports={recentViews} embedded/>
+              <ExchangeRatePanel
+                dark={dark}
+                quotation={exchangeRate}
+                history={exchangeRateHistory}
+                canManage={canManageExchangeRates(user.email)}
+                loading={exchangeRateLoading}
+                saving={exchangeRateSaving}
+                onPublish={saveExchangeRates}
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(340px, .65fr)", gap: 14, alignItems: "stretch" }} className="metrics-grid">
                 <HomeFocusPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} favorites={favorites} recentReports={recentViews} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)} onOpenReport={openReport} embedded/>
+                <IncidentCalendarPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)}/>
               </div>
-              <IncidentCalendarPanel dark={dark} reports={userVisibleReports} requests={visibleRequests} manualIncidents={incidents} isUserAdmin={isAdmin(user.email)} onEditIncidents={() => setShowIncidentEditor(true)}/>
             </div>
           )}
 
