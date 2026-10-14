@@ -3,6 +3,7 @@ const REQUESTS_ENDPOINT = "/.netlify/functions/bi-requests";
 const AUDIT_ENDPOINT = "/.netlify/functions/bi-audit";
 const INCIDENTS_ENDPOINT = "/.netlify/functions/bi-incidents";
 const SUBSCRIPTIONS_ENDPOINT = "/.netlify/functions/bi-subscriptions";
+const EXCHANGE_RATES_ENDPOINT = "/.netlify/functions/bi-exchange-rates";
 
 async function buildAuthHeaders(getAccessToken, extra = {}) {
   const token = await getAccessToken();
@@ -211,4 +212,25 @@ export async function saveBiIncidents({ getAccessToken, incidents }) {
   });
 
   return readJson(response, "incident-sync-failed");
+}
+
+export async function fetchExchangeRates({ getAccessToken }) {
+  const response = await fetch(EXCHANGE_RATES_ENDPOINT, {
+    method: "GET",
+    cache: "no-store",
+    headers: await buildAuthHeaders(getAccessToken, { Accept: "application/json" }),
+  });
+  return readJson(response, "No se pudo consultar la cotizacion vigente");
+}
+
+export async function publishExchangeRates({ getAccessToken, effectiveDate, rates }) {
+  const response = await fetch(EXCHANGE_RATES_ENDPOINT, {
+    method: "PUT",
+    headers: await buildAuthHeaders(getAccessToken, {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    }),
+    body: JSON.stringify({ effectiveDate, rates }),
+  });
+  return readJson(response, "No se pudo publicar la cotizacion");
 }

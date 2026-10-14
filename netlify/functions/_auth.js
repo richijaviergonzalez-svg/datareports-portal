@@ -45,6 +45,17 @@ function getAuditViewerEmails() {
     .filter(Boolean);
 }
 
+function getFinanceEmails() {
+  return String(
+    process.env.FINANCE_EMAILS ||
+      process.env.VITE_FINANCE_EMAILS ||
+      "finanzas@pilarpy.onmicrosoft.com"
+  )
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 function getHeader(event, name) {
   const requestHeaders = event.headers || {};
   const lowerName = name.toLowerCase();
@@ -202,6 +213,7 @@ async function authenticate(event) {
 
     const isAdmin = getAdminEmails().includes(userEmail);
     const canViewAudit = isAdmin || userEmails.some((email) => getAuditViewerEmails().includes(email));
+    const canManageExchangeRates = isAdmin || userEmails.some((email) => getFinanceEmails().includes(email));
 
     return {
       ok: true,
@@ -211,6 +223,7 @@ async function authenticate(event) {
       userName: jwt.payload.name || userEmail,
       isAdmin,
       canViewAudit,
+      canManageExchangeRates,
     };
   } catch (error) {
     return {
@@ -226,6 +239,7 @@ module.exports = {
   authenticate,
   getAdminEmails,
   getAuditViewerEmails,
+  getFinanceEmails,
   getClaimEmails,
   getHeader,
   normalizeEmail,

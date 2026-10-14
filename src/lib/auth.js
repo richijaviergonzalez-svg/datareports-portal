@@ -32,6 +32,11 @@ const AUDIT_VIEWER_EMAILS = (import.meta.env.VITE_AUDIT_VIEWER_EMAILS || "alfred
   .map((email) => email.trim().toLowerCase())
   .filter(Boolean);
 
+const FINANCE_EMAILS = (import.meta.env.VITE_FINANCE_EMAILS || "finanzas@pilarpy.onmicrosoft.com")
+  .split(",")
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean);
+
 let msalInstance = null;
 
 export function isAdmin(email) {
@@ -41,6 +46,11 @@ export function isAdmin(email) {
 export function canViewAudit(email) {
   const normalizedEmail = (email || "").trim().toLowerCase();
   return isAdmin(normalizedEmail) || AUDIT_VIEWER_EMAILS.includes(normalizedEmail);
+}
+
+export function canManageExchangeRates(email) {
+  const normalizedEmail = (email || "").trim().toLowerCase();
+  return isAdmin(normalizedEmail) || FINANCE_EMAILS.includes(normalizedEmail);
 }
 
 export function buildUserFromAccount(account) {
