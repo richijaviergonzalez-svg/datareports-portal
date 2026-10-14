@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 const CURRENCIES = [
   { code: "USD", name: "Dólar estadounidense" },
@@ -86,6 +87,24 @@ export default function ExchangeRatePanel({
     setFormError("");
   }, [editorOpen, quotation]);
 
+  useEffect(() => {
+    if (!editorOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [editorOpen]);
+
+  useEffect(() => {
+    if (!editorOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape" && !saving) setEditorOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [editorOpen, saving]);
+
   const recentHistory = useMemo(() => history.slice(0, 5), [history]);
 
   const submit = async (event) => {
@@ -144,7 +163,7 @@ export default function ExchangeRatePanel({
         )}
       </section>
 
-      {editorOpen && canManage && (
+      {editorOpen && canManage && createPortal((
         <div className="exchange-rate-modal-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && !saving) setEditorOpen(false);
         }}>
@@ -194,7 +213,7 @@ export default function ExchangeRatePanel({
             )}
           </section>
         </div>
-      )}
+      ), document.body)}
     </>
   );
 }
