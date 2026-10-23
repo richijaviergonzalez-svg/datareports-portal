@@ -52,6 +52,7 @@ import {
   buildUserFromAccount,
   canManageExchangeRates,
   canViewAudit,
+  clearCurrentSession,
   getAccessToken,
   getCurrentUser,
   isAdmin,
@@ -4749,6 +4750,14 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [initializing, setInitializing] = useState(true);
 
+  const handleLogout = async () => {
+    try {
+      await clearCurrentSession();
+    } finally {
+      setUser(null);
+    }
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -4763,7 +4772,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      {!user ? <LoginScreen onLogin={setUser}/> : <Dashboard user={user} onLogout={() => setUser(null)}/>}
+      {!user ? <LoginScreen onLogin={setUser}/> : <Dashboard user={user} onLogout={handleLogout}/>}
     </ErrorBoundary>
   );
 }

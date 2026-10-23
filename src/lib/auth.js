@@ -82,15 +82,28 @@ export async function getMsalInstance() {
 export async function msalLogin() {
   const instance = await getMsalInstance();
   const redirectResponse = await instance.handleRedirectPromise().catch(() => null);
-  const account = redirectResponse?.account || instance.getAllAccounts()[0];
+  const account = redirectResponse?.account;
 
   if (account) {
     instance.setActiveAccount(account);
     return account;
   }
 
-  await instance.loginRedirect({ scopes: AUTH_CONFIG.scopes });
+  await instance.loginRedirect({
+    scopes: AUTH_CONFIG.scopes,
+    prompt: "select_account",
+  });
   return null;
+}
+
+export async function clearCurrentSession() {
+  const instance = await getMsalInstance();
+  const accounts = instance.getAllAccounts();
+  instance.setActiveAccount(null);
+
+  for (const account of accounts) {
+    await instance.clearCache({ account });
+  }
 }
 
 export async function getAccessToken() {
@@ -109,7 +122,10 @@ export async function getAccessToken() {
     return response.accessToken;
   } catch (error) {
     try {
-      const response = await instance.acquireTokenPopup({ scopes: AUTH_CONFIG.scopes });
+      const response = await instance.acquireTokenPopup({
+        scopes: AUTH_CONFIG.scopes,
+        account: accounts[0],
+      });
       return response.accessToken;
     } catch (popupError) {
       throw new Error("No se pudo renovar la sesion. Por favor, cerra sesion y volve a iniciar.");
